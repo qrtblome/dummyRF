@@ -80,6 +80,7 @@ class Transmitter:
     label: str = ""              # mux or programme name
     polarization: str = ""
     h_antenna_m: float | None = None
+    pattern_db: list[float] | None = None   # directional antenna: attenuation every 10°
 
     @property
     def is_fm(self) -> bool:
@@ -223,7 +224,8 @@ def _merge_sites(lib: Library, data: dict, src: Path) -> None:
                                service=t.get("service", ""),
                                label=t.get("mux") or t.get("program") or "",
                                polarization=t.get("polarization", ""),
-                               h_antenna_m=t.get("h_antenna_m"))
+                               h_antenna_m=t.get("h_antenna_m"),
+                               pattern_db=t.get("pattern_db"))
                    for t in s.get("transmitters", [])]
             sites.append(Station(s["name"], float(s["lat"]), float(s["lon"]), txs,
                                  s.get("location", ""), s.get("region", ""), s.get("h_terrain_m")))

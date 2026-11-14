@@ -29,6 +29,7 @@ class Settings:
     venue_lat: float | None = None
     venue_lon: float | None = None
     venue_label: str = ""
+    propagation: dict = field(default_factory=dict)   # propagation.ModelSettings as a dict
 
 
 @dataclass

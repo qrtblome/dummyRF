@@ -59,6 +59,13 @@ python -m dummyrf.uke_import
 
 The `_h_` (history) files are not needed.
 
+**Predicted levels:** for every transmitter the dialog estimates the channel power at the venue (dBm at the
+receivers' antenna) from ERP, frequency, distance, antenna heights and — when the register has one — the
+directional antenna pattern, using the Okumura-Hata model (urban / suburban / open) or free space (worst
+case). No terrain data: treat it as a guide. Transmitters above the "tick at or above" level are ticked for
+exclusion; above the "neighbours" level the adjacent channels are excluded as well. Model settings are
+saved with the show (`dummyrf/propagation.py`).
+
 **Venue position:** type a postal code (`60-685`), a town (`Poznań`, `srem`) or coordinates — looked up offline
 in `dummyrf/data/postcodes_pl.tsv.gz` (postal codes from [GeoNames](https://www.geonames.org), CC BY 4.0;
 refresh with `python -m dummyrf.geocode build PL.txt` from https://download.geonames.org/export/zip/PL.zip).

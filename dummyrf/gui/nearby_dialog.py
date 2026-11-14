@@ -5,18 +5,20 @@ import asyncio
 import weakref
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QDoubleSpinBox,
                                QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QMenu, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
-from .. import geocode, library
+from .. import geocode, library, propagation
 from ..coordination import Exclusion
 from .fit import compact_combo, fit_to_screen, tame_combos
 from .site_search import attach_site_search
 from .context import AppContext
 
-COLS = ["", "km", "Site", "Location", "Region", "Service", "Ch.", "MHz", "Mux / programme",
-        "ERP kW", "Pol."]
+COLS = ["", "Level", "Verdict", "km", "Site", "Location", "Service", "Ch.", "MHz",
+        "Mux / programme", "ERP kW", "Ant. m", "Pol."]
+VERDICT_COLOR = {"very": "#e74c3c", "receivable": "#e67e22", "weak": "#c9a400", "negligible": "#888888"}
 SERVICE_GROUPS = {"TV": ("DVB-T", "DVB-T2", "DVB-T/T2", "5G Broadcast"), "DAB": ("DAB+",),
                   "FM": ("FM",)}
 
@@ -27,7 +29,7 @@ class NearbyTransmittersDialog(QDialog):
         self.ctx = ctx
         self.lib = library.get()
         self.setWindowTitle("Nearby transmitters")
-        self.rows: list[tuple[float, library.Station, library.Transmitter]] = []
+        self.rows: list[tuple[float, library.Station, library.Transmitter, float]] = []
 
         self.venue = QLineEdit()
         self.venue.setPlaceholderText("postal code (60-685), town (Poznań) or latitude, longitude")
@@ -75,6 +77,41 @@ class NearbyTransmittersDialog(QDialog):
         find.clicked.connect(self.search)
         self.radius.editingFinished.connect(self._find_transmitters)
 
+        # ---- propagation model (saved with the show)
+        ms = self.model_settings()
+        self.env = compact_combo(16)
+        for key, label in propagation.ENVIRONMENTS.items():
+            self.env.addItem(label, key)
+        self.env.setCurrentIndex(max(0, self.env.findData(ms.environment)))
+        self.env.setToolTip("Okumura-Hata path loss for the surroundings between transmitter and "
+                            "venue.\nFree space = no obstacles at all (worst case, highest level).")
+        self.rx_h = self._spin(1, 30, ms.rx_height_m, " m", 1,
+                               "Height of the wireless receivers' antennas above ground")
+        self.building = self._spin(0, 40, ms.extra_loss_db, " dB", 0,
+                                   "Extra loss for an indoor venue (walls/roof), typically 10–15 dB")
+        self.use_pat = QCheckBox("antenna patterns")
+        self.use_pat.setChecked(ms.use_patterns)
+        self.use_pat.setToolTip("Use the directional antenna patterns from the UKE register "
+                                "(off = every transmitter omnidirectional)")
+        self.tick_above = self._spin(-130, 0, ms.exclude_above_dbm, " dBm", 0,
+                                     "Transmitters at or above this level are ticked for exclusion")
+        self.adj_above = self._spin(-130, 0, ms.adjacent_above_dbm, " dBm", 0,
+                                    "At or above this level the neighbouring channels are excluded too")
+        for w in (self.rx_h, self.building, self.tick_above, self.adj_above):
+            w.editingFinished.connect(self._model_changed)
+        self.env.currentIndexChanged.connect(self._model_changed)
+        self.use_pat.toggled.connect(self._model_changed)
+        row_m = QHBoxLayout()
+        for w in (self.env, QLabel("rx antenna"), self.rx_h, QLabel("building loss"), self.building,
+                  self.use_pat):
+            row_m.addWidget(w)
+        row_m.addStretch()
+        row_t = QHBoxLayout()
+        for w in (QLabel("tick at or above"), self.tick_above, QLabel("also neighbours at or above"),
+                  self.adj_above):
+            row_t.addWidget(w)
+        row_t.addStretch()
+
         row_svc = QHBoxLayout()
         for cb in self.svc.values():
             row_svc.addWidget(cb)
@@ -98,6 +135,8 @@ class NearbyTransmittersDialog(QDialog):
         form.addRow("", self.site_pick)
         form.addRow("Radius", row_r)
         form.addRow("Services", row_svc)
+        form.addRow("Model", row_m)
+        form.addRow("Exclude", row_t)
 
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
@@ -130,12 +169,40 @@ class NearbyTransmittersDialog(QDialog):
         lay.addLayout(row_b)
         tame_combos(self)
         fit_to_screen(self, 0.75, 0.75, max_w=1200, max_h=760)
-        credits = QLabel("Postal codes: GeoNames (geonames.org, CC BY 4.0) · "
+        credits = QLabel("Levels: Okumura-Hata estimate, no terrain — a guide, not a measurement.  "
+                         "Postal codes: GeoNames (geonames.org, CC BY 4.0) · "
                          "online search: © OpenStreetMap contributors")
+        credits.setWordWrap(True)
         credits.setStyleSheet("color: gray; font-size: 10px;")
         lay.addWidget(credits)
         if self.pos:
             self._find_transmitters()
+
+    # ------------------------------------------------------------ model
+    @staticmethod
+    def _spin(lo, hi, value, suffix, decimals, tip):
+        w = QDoubleSpinBox()
+        w.setRange(lo, hi)
+        w.setDecimals(decimals)
+        w.setValue(value)
+        w.setSuffix(suffix)
+        w.setToolTip(tip)
+        return w
+
+    def model_settings(self) -> propagation.ModelSettings:
+        saved = self.ctx.show_data.settings.propagation or {}
+        try:
+            return propagation.ModelSettings(**saved)
+        except TypeError:
+            return propagation.ModelSettings()
+
+    def _model_changed(self, *_):
+        ms = propagation.ModelSettings(
+            environment=self.env.currentData(), rx_height_m=self.rx_h.value(),
+            extra_loss_db=self.building.value(), use_patterns=self.use_pat.isChecked(),
+            exclude_above_dbm=self.tick_above.value(), adjacent_above_dbm=self.adj_above.value())
+        self.ctx.show_data.settings.propagation = vars(ms).copy()
+        self._find_transmitters()
 
     # ------------------------------------------------------------ search
     def _site_chosen(self, idx: int):
@@ -207,8 +274,15 @@ class NearbyTransmittersDialog(QDialog):
         if not self.pos:
             return
         lat, lon = self.pos
-        self.rows = [(d, s, t) for d, s in self.lib.nearby(lat, lon, self.radius.value())
-                     for t in s.transmitters]
+        ms = self.model_settings()
+        rows = []
+        for d, s in self.lib.nearby(lat, lon, self.radius.value()):
+            az = propagation.bearing_deg(s.lat, s.lon, lat, lon)     # transmitter -> venue
+            for t in s.transmitters:
+                lvl = propagation.received_dbm(t.erp_kw, (t.freq_khz or 0) / 1000 or 100.0, d,
+                                               t.h_antenna_m, ms, t.pattern_db, az)
+                rows.append((d, s, t, lvl))
+        self.rows = sorted(rows, key=lambda r: -r[3])       # strongest first
         self._refilter()
 
     def _wanted(self, t: library.Transmitter) -> bool:
@@ -224,31 +298,42 @@ class NearbyTransmittersDialog(QDialog):
         return True
 
     def _refilter(self, *_):
+        ms = self.model_settings()
         shown = [r for r in self.rows if self._wanted(r[2])]
         have = {(e.lo_khz, e.hi_khz) for e in self.ctx.show_data.exclusions}
         self.table.setRowCount(len(shown))
         self._shown = shown
-        for i, (d, s, t) in enumerate(shown):
+        ticked = 0
+        for i, (d, s, t, lvl) in enumerate(shown):
             ex = t.exclusion(s.name)
             already = ex is not None and (ex.lo_khz, ex.hi_khz) in have
             chk = QTableWidgetItem("✓" if already else "")
             chk.setFlags(Qt.ItemIsEnabled | (Qt.NoItemFlags if already else Qt.ItemIsUserCheckable))
             if not already:
-                chk.setCheckState(Qt.Checked)
+                on = lvl >= ms.exclude_above_dbm
+                ticked += on
+                chk.setCheckState(Qt.Checked if on else Qt.Unchecked)
             chk.setToolTip("already an exclusion" if already else "")
             self.table.setItem(i, 0, chk)
-            vals = [f"{d:.1f}", s.name, s.location, s.region.title(), t.service, t.channel,
-                    f"{t.freq_khz / 1000:.3f}" if t.freq_khz else "", t.label,
-                    f"{t.erp_kw:g}" if t.erp_kw else "", t.polarization]
+            verdict = propagation.verdict(lvl, ms)
+            vals = [f"{lvl:.0f} dBm" if lvl > -999 else "—", verdict, f"{d:.1f}", s.name, s.location,
+                    t.service, t.channel, f"{t.freq_khz / 1000:.3f}" if t.freq_khz else "", t.label,
+                    f"{t.erp_kw:g}" if t.erp_kw else "",
+                    f"{t.h_antenna_m:g}" if t.h_antenna_m else "", t.polarization]
+            color = QColor(VERDICT_COLOR[verdict.split()[0]])
             for c, v in enumerate(vals, start=1):
                 it = QTableWidgetItem(v)
-                if c in (1, 7, 9):
+                if c in (1, 3, 8, 10, 11):
                     it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if c in (1, 2):
+                    it.setForeground(color)
                 self.table.setItem(i, c, it)
-        sites = len({id(s) for _, s, _ in shown})
-        self.summary.setText(f"{len(shown)} transmitter(s) at {sites} site(s) shown "
-                             f"({len(self.rows)} within {self.radius.value():g} km).  "
-                             + " · ".join(self.lib.site_sources))
+            if t.pattern_db and ms.use_patterns:
+                self.table.item(i, 1).setToolTip("directional antenna pattern applied")
+        sites = len({id(s) for _, s, _, _ in shown})
+        self.summary.setText(f"{len(shown)} transmitter(s) at {sites} site(s), {ticked} ticked "
+                             f"at ≥ {ms.exclude_above_dbm:g} dBm ({len(self.rows)} within "
+                             f"{self.radius.value():g} km).  " + " · ".join(self.lib.site_sources))
         self.add_btn.setEnabled(bool(shown))
 
     def _check_all(self, on: bool):
@@ -258,14 +343,20 @@ class NearbyTransmittersDialog(QDialog):
                 it.setCheckState(Qt.Checked if on else Qt.Unchecked)
 
     def add_checked(self):
+        ms = self.model_settings()
         new: list[Exclusion] = []
-        for i, (d, s, t) in enumerate(self._shown):
+        for i, (d, s, t, lvl) in enumerate(self._shown):
             it = self.table.item(i, 0)
             if it.flags() & Qt.ItemIsUserCheckable and it.checkState() == Qt.Checked:
                 ex = t.exclusion(s.name)
                 if ex:
-                    ex.label += f", {d:.0f} km"
+                    ex.label += f", {d:.0f} km, ~{lvl:.0f} dBm"
                     new.append(ex)
+                    if lvl >= ms.adjacent_above_dbm and t.width_khz:
+                        w = t.width_khz
+                        for lo, side in ((ex.lo_khz - w, "below"), (ex.hi_khz, "above")):
+                            new.append(Exclusion(lo, lo + w, f"neighbour {side} {s.name}: "
+                                                 f"{t.service} {t.channel} (~{lvl:.0f} dBm)"))
         have = {(e.lo_khz, e.hi_khz) for e in self.ctx.show_data.exclusions}
         added = []
         for e in new:
