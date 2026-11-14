@@ -176,21 +176,27 @@ async def _probe_shure_once(host: str, port: int, timeout: float):
         return _RETRY
     except (OSError, asyncio.TimeoutError):
         return None
+    # Only answers to OUR three questions count.  A ULX-D also pushes status
+    # updates to every connected client unasked (e.g. "< REP 2
+    # TX_MUTE_BUTTON_STATUS RELEASED >"), more of them while WWB or dummyRF is
+    # connected; counting those as answers made scans miss units at random.
+    asked = ("MODEL", "DEVICE_ID", "RF_BAND")
     info: dict[str, str] = {}
-    replies = 0  # REP or ERR, one per question
+    errs = 0
+    spoke_shure = False   # any well-formed REP at all
     got_data = False
     try:
         writer.write(b"< GET MODEL >< GET DEVICE_ID >< GET RF_BAND >")
         await writer.drain()
         buf = ""
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + 1.0
-        while replies < 3:
+        deadline = loop.time() + 1.5
+        while not ("MODEL" in info and sum(k in info for k in asked) + errs >= len(asked)):
             left = deadline - loop.time()
             if left <= 0:
                 break
             try:
-                data = await asyncio.wait_for(reader.read(1024), left)
+                data = await asyncio.wait_for(reader.read(4096), left)
             except asyncio.TimeoutError:
                 break
             if not data:
@@ -200,17 +206,22 @@ async def _probe_shure_once(host: str, port: int, timeout: float):
             while (s := buf.find("<")) >= 0 and (e := buf.find(">", s)) >= 0:
                 msg = parse_message(buf[s + 1:e])
                 buf = buf[e + 1:]
-                if msg and msg[0] == "REP":
-                    replies += 1
-                    if msg[2] != "ERR":
-                        info[msg[2]] = msg[3].strip("{} ").strip()
+                if not msg or msg[0] != "REP":
+                    continue
+                spoke_shure = True
+                verb, ch, cmd, value = msg
+                if cmd == "ERR":
+                    errs += 1           # RF_BAND on a ULX-D, for instance
+                elif ch == 0 and cmd in asked and cmd not in info:
+                    info[cmd] = value.strip("{} ").strip()
     except OSError:
         pass
     finally:
         writer.close()
     if "MODEL" not in info:
-        # accepted then closed without a word: a busy Shure unit does that
-        return None if got_data else _RETRY
+        # Shure protocol but no model in time (busy unit), or closed without a
+        # word: try again.  Something else on the port: not a Shure device.
+        return _RETRY if spoke_shure or not got_data else None
     prof = match_shure_model(info["MODEL"])
     return Found("shure", host, port, prof.model if prof else info["MODEL"], prof is not None,
                  info.get("DEVICE_ID", ""), info.get("RF_BAND", ""))
