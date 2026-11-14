@@ -26,6 +26,8 @@ class Settings:
     threshold_dbm: float = -80.0
     time_limit_s: float = 5.0
     poll_interval_s: float = 2.0
+    venue_lat: float | None = None
+    venue_lon: float | None = None
 
 
 @dataclass

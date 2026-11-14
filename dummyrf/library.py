@@ -21,6 +21,8 @@ library "SLXD" -> profiles SLXD4 and SLXD4D.
 from __future__ import annotations
 
 import json
+import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -69,9 +71,26 @@ class ChannelPlan:
 
 @dataclass
 class Transmitter:
-    plan: str
-    channel: str
+    plan: str = ""              # channel plan key (stations.json) …
+    channel: str = ""
     erp_kw: float = 0.0
+    freq_khz: int | None = None  # … or the frequency itself (transmitters_*.json)
+    width_khz: int | None = None
+    service: str = ""            # DVB-T2, DAB+, FM, …
+    label: str = ""              # mux or programme name
+    polarization: str = ""
+    h_antenna_m: float | None = None
+
+    def exclusion(self, plans: dict[str, "ChannelPlan"], station: str) -> Exclusion | None:
+        erp = f" ({self.erp_kw:g} kW)" if self.erp_kw else ""
+        if self.freq_khz and self.width_khz:
+            what = " ".join(x for x in (self.service, self.channel, self.label) if x)
+            half = self.width_khz // 2
+            return Exclusion(self.freq_khz - half, self.freq_khz + half, f"{station}: {what}{erp}")
+        plan = plans.get(self.plan)
+        if plan and self.channel in plan.channels:
+            return plan.exclusion(self.channel, f"{station}: {plan.type} {self.channel}{erp}")
+        return None
 
 
 @dataclass
@@ -80,6 +99,9 @@ class Station:
     lat: float
     lon: float
     transmitters: list[Transmitter] = field(default_factory=list)
+    location: str = ""
+    region: str = ""
+    h_terrain_m: float | None = None
 
 
 @dataclass
@@ -87,7 +109,9 @@ class Library:
     band_sets: dict[str, list[Band]] = field(default_factory=dict)
     models: list[EquipmentModel] = field(default_factory=list)
     plans: dict[str, ChannelPlan] = field(default_factory=dict)
-    stations: list[Station] = field(default_factory=list)
+    stations: list[Station] = field(default_factory=list)   # hand-picked (stations.json)
+    sites: list[Station] = field(default_factory=list)      # full registers (transmitters_*.json)
+    site_sources: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def model(self, full_name: str) -> EquipmentModel | None:
@@ -96,13 +120,51 @@ class Library:
     def station_exclusions(self, station: Station) -> list[Exclusion]:
         out = []
         for t in station.transmitters:
-            plan = self.plans.get(t.plan)
-            if plan and t.channel in plan.channels:
-                out.append(plan.exclusion(t.channel, f"{station.name}: {plan.type} {t.channel}"
-                                          + (f" ({t.erp_kw:g} kW)" if t.erp_kw else "")))
+            e = t.exclusion(self.plans, station.name)
+            if e:
+                out.append(e)
             else:
                 self.errors.append(f"{station.name}: unknown plan/channel {t.plan} {t.channel}")
         return out
+
+    def nearby(self, lat: float, lon: float, radius_km: float) -> list[tuple[float, Station]]:
+        """Transmitter sites within ``radius_km``, nearest first."""
+        out = []
+        for st in self.sites:
+            if abs(st.lat - lat) > radius_km / 100 + 0.1:     # cheap pre-filter (1° ≈ 111 km)
+                continue
+            d = distance_km(lat, lon, st.lat, st.lon)
+            if d <= radius_km:
+                out.append((d, st))
+        return sorted(out, key=lambda x: x[0])
+
+
+def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * 6371.0 * math.asin(math.sqrt(a))
+
+
+_COORD = re.compile(r"""^\s*(-?\d+(?:[.,]\d+)?)\s*°?\s*([NS])?\s*[,; ]\s*(-?\d+(?:[.,]\d+)?)\s*°?\s*([EW])?\s*$""",
+                    re.I)
+
+
+def parse_coords(text: str) -> tuple[float, float]:
+    """'52.4064, 16.9252' / '52,4064; 16,9252' / '52.4N 16.9E' -> (lat, lon)."""
+    m = _COORD.match(text.replace(" ", " "))
+    if not m:
+        raise ValueError("enter coordinates as latitude, longitude — e.g. 52.4064, 16.9252")
+    lat = float(m.group(1).replace(",", "."))
+    lon = float(m.group(3).replace(",", "."))
+    if (m.group(2) or "").upper() == "S":
+        lat = -abs(lat)
+    if (m.group(4) or "").upper() == "W":
+        lon = -abs(lon)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError("coordinates out of range")
+    return lat, lon
 
 
 # ------------------------------------------------------------------ loading
@@ -160,9 +222,34 @@ def _merge_stations(lib: Library, data: list, src: Path) -> None:
         lib.stations = [x for x in lib.stations if x.name != st.name] + [st]
 
 
+def _merge_sites(lib: Library, data: dict, src: Path) -> None:
+    if not isinstance(data, dict) or data.get("format") != "dummyrf-transmitters":
+        lib.errors.append(f"{src}: not a dummyRF transmitter list")
+        return
+    sites = []
+    for s in data.get("stations", []):
+        try:
+            txs = [Transmitter(channel=str(t.get("channel", "")), erp_kw=float(t.get("erp_kw") or 0),
+                               freq_khz=int(t["freq_khz"]), width_khz=int(t["width_khz"]),
+                               service=t.get("service", ""),
+                               label=t.get("mux") or t.get("program") or "",
+                               polarization=t.get("polarization", ""),
+                               h_antenna_m=t.get("h_antenna_m"))
+                   for t in s.get("transmitters", [])]
+            sites.append(Station(s["name"], float(s["lat"]), float(s["lon"]), txs,
+                                 s.get("location", ""), s.get("region", ""), s.get("h_terrain_m")))
+        except (KeyError, TypeError, ValueError) as e:
+            lib.errors.append(f"{src}: site {s.get('name', '?')!r}: {e}")
+    lib.sites += sites
+    lib.site_sources.append(f"{src.name} ({data.get('as_of', '?')}, {len(sites)} sites)")
+
+
 def load(dirs: list[Path] | None = None) -> Library:
     lib = Library()
     for d in dirs if dirs is not None else [PACKAGE_DIR, USER_DIR]:
+        for f in sorted(d.glob("transmitters_*.json")) if d.is_dir() else []:
+            if (data := _read(f, lib.errors)) is not None:
+                _merge_sites(lib, data, f)
         if (data := _read(d / "devices.json", lib.errors)) is not None:
             _merge_devices(lib, data, d / "devices.json")
         if (data := _read(d / "channel_plans.json", lib.errors)) is not None:

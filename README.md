@@ -44,6 +44,22 @@ identified (model, name, band). A /24 takes a few seconds. Choose **Loopback** t
 
 On macOS, allow "Local Network" access for Terminal (or the app) when asked, otherwise nothing is found.
 
+## Broadcast transmitters (Poland)
+
+`dummyrf/data/transmitters_pl.json` holds every TV (DVB-T/T2), DAB and FM transmitter from the UKE permit
+registers (741 sites, 2,038 transmitters as of 2026-10-23). Coordination tab → **Nearby transmitters…**: enter
+the venue's coordinates (or pick a site), a radius, and add the channels you see as exclusions.
+
+To refresh it, download the current `pozwolenia_ntc_r_*.csv`, `pozwolenia_dab_r_*.csv` and
+`pozwolenie_ukf_r_*.csv` registers from UKE into `dummyrf/data/transmitters/` and run:
+
+```bash
+python -m dummyrf.uke_import
+```
+
+The `_h_` (history) files are not needed. Other countries can be added as further `transmitters_*.json`
+files in the same format, in `dummyrf/data/` or `~/.dummyrf/`.
+
 ## Notes
 
 - Message boxes are drawn by Qt rather than as native macOS alerts: on macOS 27 the native alert can crash

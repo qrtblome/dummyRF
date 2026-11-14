@@ -143,8 +143,13 @@ class CoordinationTab(QWidget):
         add_st.setEnabled(bool(lib.stations))
         rem_ex = QPushButton("Remove")
         rem_ex.clicked.connect(self.remove_exclusions)
+        near = QPushButton("Nearby transmitters…")
+        near.setToolTip("Find TV / DAB / FM transmitters around the venue (UKE register)")
+        near.clicked.connect(self.nearby_transmitters)
+        near.setEnabled(bool(lib.sites))
         r3.addWidget(self.station, 1)
         r3.addWidget(add_st)
+        r3.addWidget(near)
         r3.addWidget(rem_ex)
         el.addLayout(r1)
         el.addLayout(r2)
@@ -378,6 +383,13 @@ class CoordinationTab(QWidget):
             return
         added = self._add_exclusions(lib.station_exclusions(st))
         self.results.setPlainText(f"{st.name}: added {len(added)} exclusion(s).")
+
+    def nearby_transmitters(self):
+        from .nearby_dialog import NearbyTransmittersDialog
+        if getattr(self, "_nearby", None) is None:
+            self._nearby = NearbyTransmittersDialog(self.ctx, self)
+        self._nearby._refilter()
+        self._nearby.exec()
 
     def add_from_library(self):
         from .library_dialog import AddFromLibraryDialog
