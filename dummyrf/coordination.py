@@ -36,8 +36,18 @@ class SpacingProfile:
 
 SPACING_PROFILES: dict[str, SpacingProfile] = {p.key: p for p in [
     SpacingProfile("digital_mic", "Digital mic (ULX-D/QLX-D/SLX-D/AD)", 350, 75, 0, 25),
+    SpacingProfile("slxd_norm", "SLX-D", 450, 200, 0, 25),
+    SpacingProfile("qlxd_norm", "QLX-D", 350, 75, 0, 25),
+    SpacingProfile("ulxd_norm", "ULX-D, standard", 350, 75, 0, 25),
+    SpacingProfile("ulxd_high_density", "ULX-D, high density", 125, 150, 0, 25),
+    SpacingProfile("axient_norm", "Axient Digital, standard", 350, 75, 0, 25),
+    SpacingProfile("axient_high_density", "Axient Digital, high density", 125, 150, 0, 25),
     SpacingProfile("analog_iem", "Analog IEM (PSM1000/ADPSM/EW IEM G4)", 400, 150, 50, 50),
+    SpacingProfile("ew_iem", "EW IEM G3/G4)", 400, 200, 100, 50),
+    SpacingProfile("sr_iem", "SR2050)", 400, 200, 100, 50),
     SpacingProfile("analog_mic", "Analog mic (EW G3/G4)", 350, 125, 50, 50),
+    SpacingProfile("blx", "BLX", 500, 225, 175, 125, 50),
+    SpacingProfile("act747", "ACT-747", 500, 225, 175, 125, 50),
     SpacingProfile("strict", "Strict / unknown equipment", 500, 200, 100, 100),
 ]}
 

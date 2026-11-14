@@ -10,9 +10,10 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
                                QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from ..profiles import (BOOL, ENUM, FAMILIES, FREQ, INT, STR, ModelProfile, Param,
+from ..profiles import (BOOL, FAMILIES, FREQ, INT, STR, ModelProfile, Param,
                         models_for_family)
 from ..show import DeviceSpec
+from . import dialogs
 from .context import AppContext
 
 COLS = ["Device / Ch", "Model / Name", "Frequency (MHz)", "Gain", "Mute", "RF power",
@@ -78,7 +79,7 @@ class AddDeviceDialog(QDialog):
 
     def _accept(self):
         if not self.host.text().strip():
-            QMessageBox.warning(self, "Add device", "Enter an IP address.")
+            dialogs.warning(self, "Add device", "Enter an IP address.")
             return
         self.accept()
 
@@ -212,7 +213,7 @@ class ChannelEditor(QGroupBox):
             return
         changed = {k: self._value(k) for k in self.widgets if self._value(k) != self.original.get(k)}
         if "frequency" in changed and changed["frequency"] % 25:
-            QMessageBox.warning(self, "Frequency", "Frequency must be on a 25 kHz step.")
+            dialogs.warning(self, "Frequency", "Frequency must be on a 25 kHz step.")
             return
         for key, val in changed.items():
             self.ctx.manager.set_param(self.uid, self.channel, key, val)
@@ -228,12 +229,15 @@ class DevicesTab(QWidget):
 
         bar = QHBoxLayout()
         add = QPushButton("Add device…")
+        scan = QPushButton("Scan network…")
         rem = QPushButton("Remove")
         demo = QPushButton("Start demo rack (simulators)")
         add.clicked.connect(self.add_device)
+        scan.clicked.connect(self.scan_network)
         rem.clicked.connect(self.remove_selected)
         demo.clicked.connect(self.start_demo)
         bar.addWidget(add)
+        bar.addWidget(scan)
         bar.addWidget(rem)
         bar.addStretch()
         bar.addWidget(demo)
@@ -346,12 +350,16 @@ class DevicesTab(QWidget):
             self.ctx.show_data.devices.append(spec)
             self.ctx.manager.add_device(spec)
 
+    def scan_network(self):
+        from .scan_dialog import ScanDialog
+        ScanDialog(self.ctx, self).exec()
+
     def remove_selected(self):
         sel = self._selected()
         if not sel:
             return
         uid = sel[0]
-        if QMessageBox.question(self, "Remove device",
+        if dialogs.question(self, "Remove device",
                                 f"Remove {self.ctx.manager.name(uid)} from the show?") != QMessageBox.Yes:
             return
         self.ctx.show_data.devices = [d for d in self.ctx.show_data.devices if d.uid != uid]
@@ -364,7 +372,7 @@ class DevicesTab(QWidget):
 
     def _demo_started(self, rack, err):
         if err:
-            QMessageBox.warning(self, "Demo rack", f"Could not start simulators:\n{err}")
+            dialogs.warning(self, "Demo rack", f"Could not start simulators:\n{err}")
             return
         have = {(d.host, d.port) for d in self.ctx.show_data.devices}
         for s in rack:

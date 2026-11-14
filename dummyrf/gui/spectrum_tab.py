@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
+from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel,
                                QPushButton, QVBoxLayout, QWidget)
 
 from ..coordination import imd_products, mhz
 from ..scan import load_scan, synthetic_scan
+from . import dialogs
 from .context import AppContext
 
 SCAN_COLORS = ["#4aa3df", "#9b59b6", "#16a085", "#d35400", "#7f8c8d"]
@@ -73,7 +74,7 @@ class SpectrumTab(QWidget):
             except (OSError, ValueError) as e:
                 errors.append(str(e))
         if errors:
-            QMessageBox.warning(self, "Load scan", "\n".join(errors))
+            dialogs.warning(self, "Load scan", "\n".join(errors))
         self.ctx.scans_changed.emit()
         self._fit()
 

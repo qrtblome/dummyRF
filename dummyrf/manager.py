@@ -48,6 +48,10 @@ class DeviceManager(QObject):
     def _run_in_gui(self, fn) -> None:
         fn()
 
+    def call_in_gui(self, fn: Callable[[], None]) -> None:
+        """Run ``fn`` on the GUI thread (safe to call from the I/O thread)."""
+        self._invoke.emit(fn)
+
     def submit(self, coro, on_done: Callable[[Any, Exception | None], None] | None = None) -> Future:
         """Run ``coro`` on the I/O loop; ``on_done(result, error)`` is called on the GUI thread."""
         fut = asyncio.run_coroutine_threadsafe(coro, self.loop)

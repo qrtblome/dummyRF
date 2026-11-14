@@ -7,9 +7,11 @@ from pathlib import Path
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QTabWidget
 
+from .. import library
 from ..manager import DeviceManager
 from ..scan import load_scan
 from ..show import Show
+from . import dialogs
 from .context import AppContext
 from .coordination_tab import CoordinationTab
 from .devices_tab import DevicesTab
@@ -21,6 +23,7 @@ APP_NAME = "dummyRF"
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        lib = library.get()  # loads JSON data and applies band sets to device profiles
         self.manager = DeviceManager()
         self.ctx = AppContext(self.manager)
         self.path: Path | None = None
@@ -37,6 +40,8 @@ class MainWindow(QMainWindow):
         self.manager.log.connect(lambda t: self.statusBar().showMessage(t, 5000))
         self.resize(1400, 850)
         self._title()
+        if lib.errors:
+            self.devices.append_log("Library problems:\n  " + "\n  ".join(lib.errors))
 
     def _menus(self):
         fm = self.menuBar().addMenu("&File")
@@ -54,6 +59,10 @@ class MainWindow(QMainWindow):
         q.triggered.connect(self.close)
         fm.addAction(q)
         tm = self.menuBar().addMenu("&Tools")
+        scan = QAction("Scan network for devices…", self)
+        scan.setShortcut("Ctrl+F")
+        scan.triggered.connect(self.devices.scan_network)
+        tm.addAction(scan)
         demo = QAction("Start demo rack (simulators)", self)
         demo.triggered.connect(self.devices.start_demo)
         tm.addAction(demo)
@@ -80,10 +89,10 @@ class MainWindow(QMainWindow):
         self.coord.conflicts.clear()
         self.ctx.notify_all()
         if missing:
-            QMessageBox.warning(self, "Open show", "Scan files not found:\n" + "\n".join(missing))
+            dialogs.warning(self, "Open show", "Scan files not found:\n" + "\n".join(missing))
 
     def new_show(self):
-        if QMessageBox.question(self, "New show", "Discard the current show?") == QMessageBox.Yes:
+        if dialogs.question(self, "New show", "Discard the current show?") == QMessageBox.Yes:
             self.path = None
             self._load(Show())
             self._title()
@@ -95,7 +104,7 @@ class MainWindow(QMainWindow):
         try:
             show = Show.load(path)
         except (OSError, ValueError, TypeError) as e:
-            QMessageBox.critical(self, "Open show", f"Could not open {path}:\n{e}")
+            dialogs.critical(self, "Open show", f"Could not open {path}:\n{e}")
             return
         self.path = Path(path)
         self._load(show)
@@ -108,7 +117,7 @@ class MainWindow(QMainWindow):
             self.ctx.show_data.save(self.path)
             self.statusBar().showMessage(f"Saved {self.path}", 4000)
         except OSError as e:
-            QMessageBox.critical(self, "Save", str(e))
+            dialogs.critical(self, "Save", str(e))
 
     def save_as(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save show", "show.rfshow",

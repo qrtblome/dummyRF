@@ -5,11 +5,13 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox,
                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-                               QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
+                               QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
                                QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from .. import library
 from ..coordination import (SPACING_PROFILES, CoordinationResult, Exclusion, Slot, check,
                             coordinate, mhz, tv_channel)
+from . import dialogs
 from .context import AppContext
 
 COLS = ["Label", "Equipment", "Band low (MHz)", "Band high (MHz)", "Frequency (MHz)", "Fixed",
@@ -47,7 +49,8 @@ class CoordinationTab(QWidget):
         self.table.itemChanged.connect(self._item_changed)
 
         btns = QHBoxLayout()
-        for text, fn in [("Add slot", self.add_slot), ("Remove", self.remove_slots),
+        for text, fn in [("Add slot", self.add_slot), ("Add from library…", self.add_from_library),
+                         ("Remove", self.remove_slots),
                          ("Import from devices", self.import_devices),
                          ("Clear unfixed freqs", self.clear_unfixed)]:
             b = QPushButton(text)
@@ -117,22 +120,36 @@ class CoordinationTab(QWidget):
         r1.addWidget(QLabel("–"))
         r1.addWidget(self.ex_hi)
         r1.addWidget(add_rng)
+        lib = library.get()
         r2 = QHBoxLayout()
-        self.tv_ch = QSpinBox()
-        self.tv_ch.setRange(14, 69)
-        self.tv_ch.setValue(21)
-        self.tv_region = QComboBox()
-        self.tv_region.addItems(["EU", "US"])
-        add_tv = QPushButton("Add TV channel")
-        add_tv.clicked.connect(self.add_tv)
+        self.plan = QComboBox()
+        for key, plan in lib.plans.items():
+            self.plan.addItem(f"{plan.type} ({plan.width_khz / 1000:g} MHz)", key)
+        self.plan.addItem("US TV UHF (6 MHz, built-in)", "_us")
+        self.plan_ch = QComboBox()
+        self.plan.currentIndexChanged.connect(self._plan_changed)
+        add_ch = QPushButton("Add channel")
+        add_ch.clicked.connect(self.add_plan_channel)
+        r2.addWidget(self.plan, 1)
+        r2.addWidget(self.plan_ch)
+        r2.addWidget(add_ch)
+        r3 = QHBoxLayout()
+        self.station = QComboBox()
+        for st in lib.stations:
+            chans = ", ".join(f"{t.channel}" for t in st.transmitters)
+            self.station.addItem(f"{st.name}  [{chans}]", st.name)
+        add_st = QPushButton("Add station")
+        add_st.clicked.connect(self.add_station)
+        add_st.setEnabled(bool(lib.stations))
         rem_ex = QPushButton("Remove")
         rem_ex.clicked.connect(self.remove_exclusions)
-        r2.addWidget(self.tv_ch)
-        r2.addWidget(self.tv_region)
-        r2.addWidget(add_tv)
-        r2.addWidget(rem_ex)
+        r3.addWidget(self.station, 1)
+        r3.addWidget(add_st)
+        r3.addWidget(rem_ex)
         el.addLayout(r1)
         el.addLayout(r2)
+        el.addLayout(r3)
+        self._plan_changed()
 
         self.results = QPlainTextEdit()
         self.results.setReadOnly(True)
@@ -250,9 +267,9 @@ class CoordinationTab(QWidget):
                 s.fixed = it.checkState() == Qt.Checked
                 if s.fixed and not s.freq_khz:
                     s.fixed = False
-                    QMessageBox.information(self, "Fixed", "Enter a frequency before fixing it.")
+                    dialogs.information(self, "Fixed", "Enter a frequency before fixing it.")
         except ValueError as e:
-            QMessageBox.warning(self, "Invalid value", str(e))
+            dialogs.warning(self, "Invalid value", str(e))
         self.conflicts.clear()
         self.ctx.inventory_changed.emit()
 
@@ -324,14 +341,51 @@ class CoordinationTab(QWidget):
         self.ctx.show_data.exclusions.append(Exclusion(int(lo * 1000), int(hi * 1000), "manual"))
         self.ctx.exclusions_changed.emit()
 
-    def add_tv(self):
-        try:
-            e = tv_channel(self.tv_ch.value(), self.tv_region.currentText())
-        except ValueError as ex:
-            QMessageBox.warning(self, "TV channel", str(ex))
+    def _plan_changed(self):
+        key = self.plan.currentData()
+        self.plan_ch.clear()
+        if key == "_us":
+            self.plan_ch.addItems([str(c) for c in range(14, 37)])
             return
-        self.ctx.show_data.exclusions.append(e)
+        plan = library.get().plans.get(key)
+        if plan:
+            for ch, centre in plan.channels.items():
+                self.plan_ch.addItem(f"{ch}  ({centre / 1000:g} MHz)", ch)
+
+    def _add_exclusions(self, new: list[Exclusion]):
+        have = {(e.lo_khz, e.hi_khz) for e in self.ctx.show_data.exclusions}
+        added = [e for e in new if (e.lo_khz, e.hi_khz) not in have]
+        self.ctx.show_data.exclusions += added
         self.ctx.exclusions_changed.emit()
+        return added
+
+    def add_plan_channel(self):
+        key = self.plan.currentData()
+        if key == "_us":
+            e = tv_channel(int(self.plan_ch.currentText()), "US")
+        else:
+            plan = library.get().plans.get(key)
+            ch = self.plan_ch.currentData()
+            if not plan or ch is None:
+                return
+            e = plan.exclusion(ch)
+        self._add_exclusions([e])
+
+    def add_station(self):
+        lib = library.get()
+        st = next((s for s in lib.stations if s.name == self.station.currentData()), None)
+        if not st:
+            return
+        added = self._add_exclusions(lib.station_exclusions(st))
+        self.results.setPlainText(f"{st.name}: added {len(added)} exclusion(s).")
+
+    def add_from_library(self):
+        from .library_dialog import AddFromLibraryDialog
+        dlg = AddFromLibraryDialog(self)
+        if dlg.exec() == AddFromLibraryDialog.Accepted:
+            self.inv.extend(dlg.slots())
+            self.conflicts.clear()
+            self.ctx.inventory_changed.emit()
 
     def remove_exclusions(self):
         ordered = sorted(self.ctx.show_data.exclusions, key=lambda e: e.lo_khz)
@@ -366,7 +420,7 @@ class CoordinationTab(QWidget):
             return
         for s in self.inv:
             if s.hi_khz <= s.lo_khz:
-                QMessageBox.warning(self, "Coordinate", f"{s.label}: band low must be below band high.")
+                dialogs.warning(self, "Coordinate", f"{s.label}: band low must be below band high.")
                 return
         st = self.ctx.show_data.settings
         scan, thr = self._scan_args()
@@ -382,7 +436,7 @@ class CoordinationTab(QWidget):
     def _coordinated(self, res):
         self.coord_btn.setEnabled(True)
         if isinstance(res, Exception):
-            QMessageBox.critical(self, "Coordinate", str(res))
+            dialogs.critical(self, "Coordinate", str(res))
             return
         res: CoordinationResult
         for i, f in res.freqs.items():
@@ -413,14 +467,14 @@ class CoordinationTab(QWidget):
             if cur != s.freq_khz:
                 changes.append((s, cur, e.status))
         if not changes:
-            QMessageBox.information(self, "Push", "Linked devices already match the plan.")
+            dialogs.information(self, "Push", "Linked devices already match the plan.")
             return
         offline = [s.label for s, _, st in changes if st != "online"]
         text = "\n".join(f"{s.label}: {mhz(c) if c else '?'} → {mhz(s.freq_khz)} MHz"
                          for s, c, _ in changes)
         if offline:
             text += "\n\nOffline (will fail): " + ", ".join(offline)
-        if QMessageBox.question(self, "Push frequencies",
+        if dialogs.question(self, "Push frequencies",
                                 f"Change {len(changes)} frequencies on the devices?\n"
                                 f"Live channels will drop out while retuning.\n\n{text}") != QMessageBox.Yes:
             return

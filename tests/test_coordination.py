@@ -1,6 +1,6 @@
 import numpy as np
 
-from dummyrf.coordination import Exclusion, Slot, check, coordinate, imd_products, tv_channel
+from dummyrf.coordination import Slot, check, coordinate, imd_products, tv_channel
 from dummyrf.scan import Scan, combine_max, parse_scan_text
 
 

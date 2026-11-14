@@ -1,0 +1,290 @@
+{
+  "band_sets": {
+    "Shure BLX": [
+      {
+        "name": "G18",
+        "low_khz": 470000,
+        "high_khz": 494000
+      },
+      {
+        "name": "H8",
+        "low_khz": 518000,
+        "high_khz": 542000
+      },
+      {
+        "name": "H9",
+        "low_khz": 512000,
+        "high_khz": 542000
+      },
+      {
+        "name": "H10",
+        "low_khz": 542000,
+        "high_khz": 572000
+      },
+      {
+        "name": "H11",
+        "low_khz": 572000,
+        "high_khz": 596000
+      },
+      {
+        "name": "H62",
+        "low_khz": 518000,
+        "high_khz": 530000
+      },
+      {
+        "name": "J10",
+        "low_khz": 584000,
+        "high_khz": 608000
+      },
+      {
+        "name": "J11",
+        "low_khz": 596000,
+        "high_khz": 616000
+      },
+      {
+        "name": "K12",
+        "low_khz": 614000,
+        "high_khz": 638000
+      },
+      {
+        "name": "K14",
+        "low_khz": 614000,
+        "high_khz": 638000
+      },
+      {
+        "name": "L27",
+        "low_khz": 674000,
+        "high_khz": 698000
+      },
+      {
+        "name": "M15",
+        "low_khz": 662000,
+        "high_khz": 686000
+      },
+      {
+        "name": "M17",
+        "low_khz": 662000,
+        "high_khz": 686000
+      },
+      {
+        "name": "M19",
+        "low_khz": 694000,
+        "high_khz": 703000
+      },
+      {
+        "name": "Q12",
+        "low_khz": 748000,
+        "high_khz": 758000
+      },
+      {
+        "name": "Q25",
+        "low_khz": 742000,
+        "high_khz": 766000
+      },
+      {
+        "name": "R12",
+        "low_khz": 794000,
+        "high_khz": 806000
+      },
+      {
+        "name": "S8",
+        "low_khz": 823000,
+        "high_khz": 832000
+      },
+      {
+        "name": "T11",
+        "low_khz": 863000,
+        "high_khz": 865000
+      }
+    ],
+    "Shure SLXD": [
+      {
+        "name": "G58",
+        "low_khz": 470000,
+        "high_khz": 514000
+      },
+      {
+        "name": "G59",
+        "low_khz": 470000,
+        "high_khz": 514000
+      },
+      {
+        "name": "G60",
+        "low_khz": 470000,
+        "high_khz": 510000
+      },
+      {
+        "name": "G61",
+        "low_khz": 479000,
+        "high_khz": 523000
+      },
+      {
+        "name": "G62",
+        "low_khz": 510000,
+        "high_khz": 530000
+      },
+      {
+        "name": "H55",
+        "low_khz": 514000,
+        "high_khz": 558000
+      },
+      {
+        "name": "H56",
+        "low_khz": 518000,
+        "high_khz": 562000
+      },
+      {
+        "name": "H57",
+        "low_khz": 520000,
+        "high_khz": 564000
+      },
+      {
+        "name": "J52",
+        "low_khz": 558000,
+        "high_khz": 616000
+      },
+      {
+        "name": "J53",
+        "low_khz": 562000,
+        "high_khz": 606000
+      },
+      {
+        "name": "J54",
+        "low_khz": 562000,
+        "high_khz": 606000
+      },
+      {
+        "name": "JB",
+        "low_khz": 806000,
+        "high_khz": 810000
+      },
+      {
+        "name": "K59",
+        "low_khz": 606000,
+        "high_khz": 650000
+      },
+      {
+        "name": "L55",
+        "low_khz": 646000,
+        "high_khz": 690000
+      },
+      {
+        "name": "L56",
+        "low_khz": 650000,
+        "high_khz": 694000
+      },
+      {
+        "name": "L57",
+        "low_khz": 650000,
+        "high_khz": 694000
+      },
+      {
+        "name": "L58",
+        "low_khz": 630000,
+        "high_khz": 674000
+      },
+      {
+        "name": "L59",
+        "low_khz": 654000,
+        "high_khz": 698000
+      },
+      {
+        "name": "M55",
+        "low_khz": 694000,
+        "high_khz": 703000
+      },
+      {
+        "name": "M55_2",
+        "low_khz": 748000,
+        "high_khz": 758000
+      },
+      {
+        "name": "S50",
+        "low_khz": 823000,
+        "high_khz": 865000
+      },
+      {
+        "name": "X51",
+        "low_khz": 925000,
+        "high_khz": 937500
+      }
+    ],
+    "Mipro ACT-747": [
+      {
+        "name": "5UA",
+        "low_khz": 482000,
+        "high_khz": 554000
+      },
+      {
+        "name": "5UB",
+        "low_khz": 554000,
+        "high_khz": 626000
+      },
+      {
+        "name": "5UC",
+        "low_khz": 626000,
+        "high_khz": 698000
+      },
+      {
+        "name": "5UD",
+        "low_khz": 698000,
+        "high_khz": 770000
+      },
+      {
+        "name": "5E",
+        "low_khz": 716000,
+        "high_khz": 790000
+      },
+      {
+        "name": "5F",
+        "low_khz": 780000,
+        "high_khz": 854000
+      },
+      {
+        "name": "8A",
+        "low_khz": 822000,
+        "high_khz": 865000
+      }
+    ]
+  },
+  "brands": [
+    {
+      "name": "Shure",
+      "models": [
+        {
+          "name": "BLX",
+          "audio_bandwidth_khz": 15,
+          "half_width_khz": 40,
+          "channels_per_unit": 1,
+          "band_set": "Shure BLX"
+        },
+        {
+          "name": "SLXD",
+          "audio_bandwidth_khz": 20,
+          "half_width_khz": 44,
+          "channels_per_unit": 1,
+          "band_set": "Shure SLXD"
+        },
+        {
+          "name": "SLXD Dual",
+          "audio_bandwidth_khz": 20,
+          "half_width_khz": 44,
+          "channels_per_unit": 2,
+          "band_set": "Shure SLXD"
+        }
+      ]
+    },
+    {
+      "name": "Mipro",
+      "models": [
+        {
+          "name": "ACT-747",
+          "audio_bandwidth_khz": 28,
+          "half_width_khz": 36,
+          "channels_per_unit": 4,
+          "band_set": "Mipro ACT-747"
+        }
+      ]
+    }
+  ]
+}

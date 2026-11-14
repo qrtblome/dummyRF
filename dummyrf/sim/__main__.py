@@ -2,10 +2,12 @@
 import argparse
 import asyncio
 
+from .. import library
 from .devices import DEMO_RACK, start_rack
 
 
 async def main(host: str) -> None:
+    library.get()  # same band data as the app
     servers = await start_rack(DEMO_RACK, host)
     for spec in DEMO_RACK:
         proto = "UDP" if spec.model.startswith("SR") else "TCP"

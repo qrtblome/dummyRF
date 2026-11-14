@@ -1,0 +1,31 @@
+[
+  {
+    "name": "Poznań - Uniwersytet Ekonomiczny",
+    "lat": 52.404815,
+    "lon": 16.921744,
+    "transmitters": [
+      {
+        "plan": "dvbt2_vhf",
+        "channel": "7",
+        "erp_kw": 0.5
+      }
+    ]
+  },
+  {
+    "name": "Poznań - Piątkowo",
+    "lat": 52.459136,
+    "lon": 16.905441,
+    "transmitters": [
+      {
+        "plan": "dab",
+        "channel": "12A",
+        "erp_kw": 4.3
+      },
+      {
+        "plan": "dvbt2_uhf",
+        "channel": "27",
+        "erp_kw": 20.0
+      }
+    ]
+  }
+]
