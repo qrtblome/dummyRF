@@ -21,8 +21,19 @@ class _Choice:
     spacing: str
 
 
+# Equipment with its own spacing profile (keys from coordination.SPACING_PROFILES).
+# Matched against the model's full name, upper-case without spaces or dashes.
+MODEL_SPACING = {
+    "MIPROACT747": "act747",
+    "SHUREBLX": "blx"
+}
+
+
 def _spacing_for(name: str) -> str:
     n = name.upper().replace(" ", "")
+    for key, profile in MODEL_SPACING.items():
+        if key in n.replace("-", ""):
+            return profile
     if any(k in n for k in ("PSM", "P10T", "ADTQ", "IEM")):
         return "analog_iem"
     if any(n.startswith(k) or f"SHURE{k}" in n for k in ("ULXD", "QLXD", "SLXD", "AD4", "AXIENT")):
