@@ -12,6 +12,7 @@ from .. import library
 from ..coordination import (SPACING_PROFILES, CoordinationResult, Exclusion, Slot, check,
                             coordinate, mhz, tv_channel)
 from . import dialogs
+from .site_search import attach_site_search
 from .context import AppContext
 
 COLS = ["Label", "Equipment", "Band low (MHz)", "Band high (MHz)", "Frequency (MHz)", "Fixed",
@@ -30,6 +31,23 @@ class _Worker(QThread):
             self.finished_result.emit(self.fn())
         except Exception as e:  # noqa: BLE001
             self.finished_result.emit(e)
+
+
+def site_label(st: library.Station) -> str:
+    """'Poznań Piątkowo — ul. Szymanowskiego 17 (Wielkopolskie) · TV 23 27 29 · DAB 12A · 10 FM'"""
+    tv = [t.channel for t in st.transmitters if t.service.startswith(("DVB", "5G"))]
+    dab = [t.channel for t in st.transmitters if t.service == "DAB+"]
+    fm = sum(t.is_fm for t in st.transmitters)
+    parts = [f"{st.name} — {st.location}" if st.location and st.location != st.name else st.name]
+    if st.region:
+        parts[0] += f" ({st.region.title()})"
+    if tv:
+        parts.append("TV " + " ".join(dict.fromkeys(tv)))
+    if dab:
+        parts.append("DAB " + " ".join(dict.fromkeys(dab)))
+    if fm:
+        parts.append(f"{fm} FM")
+    return " · ".join(parts)
 
 
 class CoordinationTab(QWidget):
@@ -135,12 +153,17 @@ class CoordinationTab(QWidget):
         r2.addWidget(add_ch)
         r3 = QHBoxLayout()
         self.station = QComboBox()
-        for st in lib.stations:
-            chans = ", ".join(f"{t.channel}" for t in st.transmitters)
-            self.station.addItem(f"{st.name}  [{chans}]", st.name)
-        add_st = QPushButton("Add station")
+        self.station.setToolTip("All TV / DAB / FM transmitter sites from the loaded registers")
+        self._sites = sorted(lib.sites, key=lambda st: (st.name, st.location))
+        for i, st in enumerate(self._sites):
+            self.station.addItem(site_label(st), i)
+        attach_site_search(self.station)
+        self.station.lineEdit().setPlaceholderText("Transmitter site — type a town or site name")
+        self.station.setCurrentIndex(-1)
+        add_st = QPushButton("Add transmitter")
+        add_st.setToolTip("Add the site's TV and DAB channels as exclusions")
         add_st.clicked.connect(self.add_station)
-        add_st.setEnabled(bool(lib.stations))
+        add_st.setEnabled(bool(lib.sites))
         rem_ex = QPushButton("Remove")
         rem_ex.clicked.connect(self.remove_exclusions)
         near = QPushButton("Nearby transmitters…")
@@ -377,12 +400,20 @@ class CoordinationTab(QWidget):
         self._add_exclusions([e])
 
     def add_station(self):
-        lib = library.get()
-        st = next((s for s in lib.stations if s.name == self.station.currentData()), None)
-        if not st:
+        idx = self.station.currentData()
+        if idx is None or self.station.currentText() != self.station.itemText(self.station.currentIndex()):
+            self.results.setPlainText("Pick a transmitter site from the list first.")
             return
-        added = self._add_exclusions(lib.station_exclusions(st))
-        self.results.setPlainText(f"{st.name}: added {len(added)} exclusion(s).")
+        st = self._sites[idx]
+        new = library.get().station_exclusions(st)
+        added = self._add_exclusions(new)
+        fm = sum(t.is_fm for t in st.transmitters)
+        msg = f"{st.name} ({st.location}): added {len(added)} exclusion(s)"
+        if len(new) > len(added):
+            msg += f", {len(new) - len(added)} already present"
+        if fm:
+            msg += f"; {fm} FM transmitter(s) skipped (use Nearby transmitters… to add FM)"
+        self.results.setPlainText(msg + ".")
 
     def nearby_transmitters(self):
         from .nearby_dialog import NearbyTransmittersDialog

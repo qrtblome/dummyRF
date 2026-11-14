@@ -11,8 +11,9 @@ Files (same format in both places; the user folder wins on name clashes):
                     half_width_khz, audio_bandwidth_khz}]}]
 ``channel_plans.json``
     {plan key: {type, width_khz, channels: {channel: centre_khz}}}
-``stations.json``
-    [{name, lat, lon, transmitters: [{plan, channel, erp_kw}]}]
+``transmitters_*.json``
+    broadcast transmitter sites, e.g. ``transmitters_pl.json`` built from the
+    Polish UKE registers by ``python -m dummyrf.uke_import``
 
 Band sets also override the hard-coded bands of network-controllable models
 (``profiles.py``) when the library model name prefixes the profile model, e.g.
@@ -71,26 +72,26 @@ class ChannelPlan:
 
 @dataclass
 class Transmitter:
-    plan: str = ""              # channel plan key (stations.json) …
     channel: str = ""
     erp_kw: float = 0.0
-    freq_khz: int | None = None  # … or the frequency itself (transmitters_*.json)
-    width_khz: int | None = None
+    freq_khz: int = 0
+    width_khz: int = 0
     service: str = ""            # DVB-T2, DAB+, FM, …
     label: str = ""              # mux or programme name
     polarization: str = ""
     h_antenna_m: float | None = None
 
-    def exclusion(self, plans: dict[str, "ChannelPlan"], station: str) -> Exclusion | None:
+    @property
+    def is_fm(self) -> bool:
+        return self.service == "FM"
+
+    def exclusion(self, station: str) -> Exclusion | None:
+        if not (self.freq_khz and self.width_khz):
+            return None
         erp = f" ({self.erp_kw:g} kW)" if self.erp_kw else ""
-        if self.freq_khz and self.width_khz:
-            what = " ".join(x for x in (self.service, self.channel, self.label) if x)
-            half = self.width_khz // 2
-            return Exclusion(self.freq_khz - half, self.freq_khz + half, f"{station}: {what}{erp}")
-        plan = plans.get(self.plan)
-        if plan and self.channel in plan.channels:
-            return plan.exclusion(self.channel, f"{station}: {plan.type} {self.channel}{erp}")
-        return None
+        what = " ".join(x for x in (self.service, self.channel, self.label) if x)
+        half = self.width_khz // 2
+        return Exclusion(self.freq_khz - half, self.freq_khz + half, f"{station}: {what}{erp}")
 
 
 @dataclass
@@ -109,22 +110,22 @@ class Library:
     band_sets: dict[str, list[Band]] = field(default_factory=dict)
     models: list[EquipmentModel] = field(default_factory=list)
     plans: dict[str, ChannelPlan] = field(default_factory=dict)
-    stations: list[Station] = field(default_factory=list)   # hand-picked (stations.json)
-    sites: list[Station] = field(default_factory=list)      # full registers (transmitters_*.json)
+    sites: list[Station] = field(default_factory=list)      # transmitter registers (transmitters_*.json)
     site_sources: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def model(self, full_name: str) -> EquipmentModel | None:
         return next((m for m in self.models if m.full_name == full_name), None)
 
-    def station_exclusions(self, station: Station) -> list[Exclusion]:
+    def station_exclusions(self, station: Station, include_fm: bool = False) -> list[Exclusion]:
+        """Exclusions for a site's transmitters (FM left out unless asked for:
+        it never reaches wireless-mic bands)."""
         out = []
         for t in station.transmitters:
-            e = t.exclusion(self.plans, station.name)
-            if e:
+            if t.is_fm and not include_fm:
+                continue
+            if (e := t.exclusion(station.name)) is not None:
                 out.append(e)
-            else:
-                self.errors.append(f"{station.name}: unknown plan/channel {t.plan} {t.channel}")
         return out
 
     def nearby(self, lat: float, lon: float, radius_km: float) -> list[tuple[float, Station]]:
@@ -210,18 +211,6 @@ def _merge_plans(lib: Library, data: dict, src: Path) -> None:
             lib.errors.append(f"{src}: plan {key!r}: {e}")
 
 
-def _merge_stations(lib: Library, data: list, src: Path) -> None:
-    for s in data:
-        try:
-            st = Station(s["name"], float(s.get("lat", 0)), float(s.get("lon", 0)),
-                         [Transmitter(t["plan"], str(t["channel"]), float(t.get("erp_kw", 0)))
-                          for t in s.get("transmitters", [])])
-        except (KeyError, TypeError, ValueError) as e:
-            lib.errors.append(f"{src}: station {s!r}: {e}")
-            continue
-        lib.stations = [x for x in lib.stations if x.name != st.name] + [st]
-
-
 def _merge_sites(lib: Library, data: dict, src: Path) -> None:
     if not isinstance(data, dict) or data.get("format") != "dummyrf-transmitters":
         lib.errors.append(f"{src}: not a dummyRF transmitter list")
@@ -254,8 +243,6 @@ def load(dirs: list[Path] | None = None) -> Library:
             _merge_devices(lib, data, d / "devices.json")
         if (data := _read(d / "channel_plans.json", lib.errors)) is not None:
             _merge_plans(lib, data, d / "channel_plans.json")
-        if (data := _read(d / "stations.json", lib.errors)) is not None:
-            _merge_stations(lib, data, d / "stations.json")
     return lib
 
 

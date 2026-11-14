@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QCompleter, QDialog,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QDoubleSpinBox, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
                                QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
                                QVBoxLayout)
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QComplet
 from .. import library
 from ..coordination import Exclusion
 from . import dialogs
+from .site_search import attach_site_search
 from .context import AppContext
 
 COLS = ["", "km", "Site", "Location", "Region", "Service", "Ch.", "MHz", "Mux / programme",
@@ -33,14 +34,10 @@ class NearbyTransmittersDialog(QDialog):
         if st.venue_lat is not None and st.venue_lon is not None:
             self.venue.setText(f"{st.venue_lat:.5f}, {st.venue_lon:.5f}")
         self.site_pick = QComboBox()
-        self.site_pick.setEditable(True)
-        self.site_pick.setInsertPolicy(QComboBox.NoInsert)
-        self.site_pick.addItem("", None)
         for s in sorted(self.lib.sites, key=lambda s: s.name):
             self.site_pick.addItem(f"{s.name} — {s.location} ({s.region.title()})", (s.lat, s.lon))
-        comp = self.site_pick.completer()
-        comp.setFilterMode(Qt.MatchContains)
-        comp.setCompletionMode(QCompleter.PopupCompletion)
+        attach_site_search(self.site_pick)
+        self.site_pick.setCurrentIndex(-1)
         self.site_pick.lineEdit().setPlaceholderText("…or start typing a transmitter site / town")
         self.site_pick.activated.connect(self._site_chosen)
 
@@ -150,7 +147,7 @@ class NearbyTransmittersDialog(QDialog):
         self.table.setRowCount(len(shown))
         self._shown = shown
         for i, (d, s, t) in enumerate(shown):
-            ex = t.exclusion(self.lib.plans, s.name)
+            ex = t.exclusion(s.name)
             already = ex is not None and (ex.lo_khz, ex.hi_khz) in have
             chk = QTableWidgetItem("✓" if already else "")
             chk.setFlags(Qt.ItemIsEnabled | (Qt.NoItemFlags if already else Qt.ItemIsUserCheckable))
@@ -183,7 +180,7 @@ class NearbyTransmittersDialog(QDialog):
         for i, (d, s, t) in enumerate(self._shown):
             it = self.table.item(i, 0)
             if it.flags() & Qt.ItemIsUserCheckable and it.checkState() == Qt.Checked:
-                ex = t.exclusion(self.lib.plans, s.name)
+                ex = t.exclusion(s.name)
                 if ex:
                     ex.label += f", {d:.0f} km"
                     new.append(ex)
