@@ -35,6 +35,23 @@ python -m dummyrf.sim        # simulators only (add --host 0.0.0.0 to expose the
 python -m pytest             # tests
 ```
 
+## Building the desktop app (macOS)
+
+```bash
+packaging/build_app.sh          # -> ~/Applications/dummyRF.app
+packaging/build_app.sh --zip    # … plus a .zip to copy to another Mac
+```
+
+PyInstaller bundles Python, Qt and the data (transmitter list, postal codes) into a normal `.app`; the
+script installs PyInstaller into the virtualenv if needed. The app is a snapshot — run the script again
+after changing the code.
+
+- It builds in `~/Library/Caches/dummyRF-build`, not in the project: in an iCloud/OneDrive folder the sync
+  attributes break code signing and the app wouldn't start.
+- The app is signed only for your own Mac (ad-hoc). Allow **Local Network** access on first launch.
+  Giving it to others without warnings needs an Apple Developer ID to sign and notarise it.
+- The build matches your Mac's processor (Apple Silicon here). Windows needs its own build on a Windows PC.
+
 ## Finding devices on the network
 
 Devices tab → **Scan network…** (or Tools → Scan network, Ctrl+F). Pick the adapter connected to the RF

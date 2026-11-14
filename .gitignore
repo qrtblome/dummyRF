@@ -7,3 +7,7 @@ __pycache__/
 
 # test suite is kept locally, not on GitHub
 tests/
+
+# app builds (packaging/build_app.sh)
+build/
+dist/
