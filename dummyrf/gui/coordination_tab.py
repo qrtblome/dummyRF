@@ -337,14 +337,16 @@ class CoordinationTab(QWidget):
         linked = {(s.device_uid, s.channel): s for s in self.inv if s.device_uid}
         added = updated = 0
         skipped = []
+        unsure = []
         for uid, e in m.entries.items():
             prof = e.driver.profile
             if not prof or e.status != "online":
                 skipped.append(m.name(uid))
                 continue
-            band = e.state.device.get("band")
-            lo, hi = prof.bands.get(band or "", (min(b[0] for b in prof.bands.values()),
-                                                 max(b[1] for b in prof.bands.values())))
+            band = m.band(uid)
+            lo, hi = band.lo_khz, band.hi_khz
+            if band.source == "unknown" or band.ambiguous:
+                unsure.append(f"{m.name(uid)}: {band.describe()}")
             for ch in range(1, prof.channels + 1):
                 vals = e.state.channels.get(ch, {})
                 label = f"{m.name(uid)} {vals.get('name') or f'ch{ch}'}".strip()
@@ -362,6 +364,9 @@ class CoordinationTab(QWidget):
         msg = f"Imported from devices: {added} added, {updated} updated."
         if skipped:
             msg += f"\nSkipped (offline / not identified): {', '.join(skipped)}"
+        if unsure:
+            msg += ("\nBand not certain — set it in the Devices tab (channel panel → Band):\n  "
+                    + "\n  ".join(unsure))
         self.results.setPlainText(msg)
 
     # ------------------------------------------------------------ exclusions

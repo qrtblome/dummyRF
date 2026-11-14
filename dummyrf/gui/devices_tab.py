@@ -107,6 +107,7 @@ class ChannelEditor(QGroupBox):
         self.channel = 0
         self.profile: ModelProfile | None = None
         self.widgets: dict[str, QWidget] = {}
+        self.band_box = None
         self.original: dict[str, Any] = {}
         self._loading = False
         self._inflight = 0
@@ -131,6 +132,7 @@ class ChannelEditor(QGroupBox):
         while self.form.rowCount():
             self.form.removeRow(0)
         self.widgets.clear()
+        self.band_box = None
         self.uid = None
         self.info.setText("Select a channel to edit it.")
         self.status.setText("")
@@ -151,8 +153,19 @@ class ChannelEditor(QGroupBox):
         self.clear()
         self.uid, self.channel, self.profile = uid, channel, entry.driver.profile
         self.setTitle(f"{self.ctx.manager.name(uid)} — channel {channel}")
-        band = entry.state.device.get("band")
-        lo, hi = self.profile.bands.get(band or "", (0, 0))
+        binfo = self.ctx.manager.band(uid)
+        lo, hi = binfo.lo_khz, binfo.hi_khz
+        if binfo.source != "device":
+            # the device doesn't report its band (ULX-D): let the user say which it is
+            self.band_box = compact_combo(10)
+            self.band_box.addItem("Auto (guess from frequencies)", "")
+            for name, (blo, bhi) in sorted(self.profile.bands.items(), key=lambda b: (b[1], b[0])):
+                self.band_box.addItem(f"{name}  {blo / 1000:g}–{bhi / 1000:g} MHz", name)
+            self.band_box.setCurrentIndex(max(0, self.band_box.findData(entry.spec.band)))
+            self.band_box.setToolTip("This model doesn't report its band over the network.\n"
+                                     "Pick the band printed on the receiver's label.")
+            self.band_box.activated.connect(self._band_chosen)
+            self.form.addRow("Band", self.band_box)
         for p in self.profile.params:
             if not p.writable:
                 continue
@@ -186,10 +199,25 @@ class ChannelEditor(QGroupBox):
                 w.activated.connect(self._changed_now)
             self.widgets[p.key] = w
             self.form.addRow(p.label, w)
-        self.info.setText(f"{self.profile.description}" + (f" · band {band} "
-                          f"({lo / 1000:.0f}–{hi / 1000:.0f} MHz)" if hi else "")
-                          + "\nChanges are sent to the device immediately.")
+        self._show_band(binfo)
         self.load_values()
+
+    def _show_band(self, binfo):
+        self.info.setText(f"{self.profile.description} · {binfo.describe()}"
+                          "\nChanges are sent to the device immediately.")
+        w = self.widgets.get("frequency")
+        if w is not None and binfo.hi_khz:
+            self._loading = True
+            try:
+                w.setRange(binfo.lo_khz / 1000, binfo.hi_khz / 1000)
+            finally:
+                self._loading = False
+
+    def _band_chosen(self, _idx: int):
+        if not self.uid:
+            return
+        self.ctx.manager.set_band(self.uid, self.band_box.currentData() or "")
+        self._show_band(self.ctx.manager.band(self.uid))
 
     def _changed_soon(self, *_):
         if not self._loading:
@@ -371,7 +399,7 @@ class DevicesTab(QWidget):
             return
         prof = e.driver.profile
         it.setText(0, self.ctx.manager.name(uid))
-        band = e.state.device.get("band") or ""
+        band = self.ctx.manager.band(uid).label() if prof else ""
         it.setText(1, f"{prof.model if prof else e.spec.model}{'  ' + band if band else ''}")
         it.setText(9, f"{e.status}  {e.spec.host}:{e.spec.port}")
         it.setForeground(9, QColor(STATUS_COLOR.get(e.status, "#888")))

@@ -17,6 +17,7 @@ class DeviceSpec:
     model: str = "auto"
     label: str = ""
     uid: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    band: str = ""        # chosen by the user when the device doesn't report it
 
 
 @dataclass

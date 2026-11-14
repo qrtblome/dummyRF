@@ -128,6 +128,21 @@ class DeviceManager(QObject):
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 15.0)
 
+    def band(self, uid: str):
+        """BandInfo for a device: reported > chosen by the user > guessed from frequencies."""
+        from .bands import BandInfo, resolve_band
+        e = self.entries.get(uid)
+        if not e or not e.driver.profile:
+            return BandInfo("", 0, 0, "unknown")
+        freqs = [ch.get("frequency") for ch in e.state.channels.values()]
+        return resolve_band(e.driver.profile, e.state.device.get("band"), e.spec.band, freqs)
+
+    def set_band(self, uid: str, name: str) -> None:
+        e = self.entries.get(uid)
+        if e:
+            e.spec.band = name
+            self.device_changed.emit(uid)
+
     def name(self, uid: str) -> str:
         e = self.entries.get(uid)
         if not e:
