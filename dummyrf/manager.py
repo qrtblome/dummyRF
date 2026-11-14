@@ -42,6 +42,7 @@ class DeviceManager(QObject):
         self._thread = threading.Thread(target=self.loop.run_forever, name="rf-io", daemon=True)
         self._thread.start()
         self._sims: list = []
+        self.paused: set[str] = set()   # devices busy with a receiver sweep: don't poll
 
     # --------------------------------------------------------------- helpers
     @Slot(object)
@@ -112,6 +113,9 @@ class DeviceManager(QObject):
                     await e.driver.connect()
                     self.log.emit(f"{self.name(e.spec.uid)}: connected ({e.driver.profile.model})")
                     backoff = 1.0
+                if e.spec.uid in self.paused:
+                    await asyncio.sleep(0.5)
+                    continue
                 e.state = await e.driver.refresh()
                 e.status = "online"
                 e.last_ok = time.time()

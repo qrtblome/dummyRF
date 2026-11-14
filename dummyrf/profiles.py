@@ -110,7 +110,8 @@ def _shure_tx_params(name_width: int) -> tuple[Param, ...]:
 
 
 ULXD_BANDS = {
-    "G50": _mhz(470, 534), "G51": _mhz(470, 534), "H50": _mhz(534, 598),
+    # G50/G51 checked on a real ULXD4D: 470.000 is refused, 470.125 is the lowest it tunes
+    "G50": _mhz(470.125, 534), "G51": _mhz(470.125, 534), "H50": _mhz(534, 598),
     "H51": _mhz(534, 598), "J50A": _mhz(572, 608), "K51": _mhz(606, 670),
     "L50": _mhz(632, 696), "P51": _mhz(710, 782),
 }

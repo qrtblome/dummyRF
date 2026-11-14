@@ -27,7 +27,7 @@ import logging
 from typing import Any
 
 from ..profiles import STR, ModelProfile, Param, match_shure_model
-from .base import DeviceState, Driver, DriverError, decode_value, encode_value
+from .base import DeviceState, Driver, DriverError, RefusedError, decode_value, encode_value
 
 log = logging.getLogger(__name__)
 
@@ -258,14 +258,20 @@ class ShureDriver(Driver):
         try:
             reply = await self._query(channel, p.cmd, "SET", raw, timeout=self.set_timeout)
         except _Unsupported as e:
-            raise DriverError(f"device refused {p.label} = {value!r} (REP ERR)") from e
+            raise RefusedError(f"device refused {p.label} = {value!r} (REP ERR)") from e
         got = decode_value(p, reply)
         if p.kind == STR:
             ok = str(got).strip() == str(value)[: p.width or None].strip()
         else:
             ok = got == decode_value(p, raw)
         if not ok:
-            raise DriverError(f"device answered {reply!r} after setting {p.label}")
+            raise RefusedError(f"device kept {reply!r} instead of {p.label} = {value!r}")
+
+    async def read(self, channel: int, key: str) -> Any:
+        p = self.profile.param(key) if self.profile else None
+        if p is None:
+            raise DriverError(f"{self.profile.model if self.profile else 'device'} has no {key!r}")
+        return decode_value(p, await self._query(channel, p.cmd))
 
     async def set_device(self, key: str, value: Any) -> None:
         p = next((p for p in self.profile.device_params if p.key == key), None)

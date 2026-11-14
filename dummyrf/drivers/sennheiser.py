@@ -18,7 +18,7 @@ import collections
 from typing import Any
 
 from ..profiles import ALL_MODELS, ModelProfile, Param
-from .base import DeviceState, Driver, DriverError, decode_value, encode_value
+from .base import DeviceState, Driver, DriverError, RefusedError, decode_value, encode_value
 
 
 def parse_lines(data: bytes) -> list[tuple[str, str]]:
@@ -121,7 +121,7 @@ class SennheiserG4Driver(Driver):
         raw = encode_value(p, value)
         reply = await self._query(p.cmd, raw)
         if decode_value(p, reply) != decode_value(p, raw):
-            raise DriverError(f"device answered {reply!r} after setting {p.label}")
+            raise RefusedError(f"device kept {reply!r} instead of {p.label} = {value!r}")
 
     async def raw(self, command: str, listen: float = 0.6) -> list[str]:
         lines: list[str] = []

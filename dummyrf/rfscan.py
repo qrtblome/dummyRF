@@ -31,6 +31,8 @@ from typing import Callable
 
 import numpy as np
 
+from .drivers.base import RefusedError
+
 SweepCallback = Callable[[np.ndarray, np.ndarray], None]
 
 RTL_POWER_PATHS = ["/opt/homebrew/bin/rtl_power", "/usr/local/bin/rtl_power"]
@@ -268,6 +270,105 @@ class SimulatedScanner(Scanner):
                 await asyncio.sleep(self.sweep_s)
         finally:
             self.running = False
+
+
+class ReceiverSweepScanner(Scanner):
+    """Scan with a wireless receiver channel: retune it step by step across the
+    range and read its RF level at each step.
+
+    Shure receivers have no scan command over the network (the scan WWB runs
+    uses Shure's private protocol), but a ULX-D reports ``RX_RF_LVL`` for the
+    frequency a channel is tuned to.  The channel is off its frequency for the
+    whole sweep — its audio drops out — and its original frequency is put back
+    when the sweep ends, however it ends.  Resolution is the receiver's channel
+    filter (~200 kHz); it is slow (~0.4 s per step on a ULX-D).
+    """
+    name = "Receiver sweep"
+
+    def __init__(self, settings: ScanSettings, on_sweep: SweepCallback,
+                 on_status: Callable[[str], None] | None = None, *, driver, channel: int,
+                 settle_s: float = 0.2, continuous: bool = True):
+        super().__init__(settings, on_sweep, on_status)
+        self.driver = driver
+        self.channel = channel
+        self.settle_s = settle_s
+        self.continuous = continuous
+        self.original_khz: int | None = None
+        self.restored = False
+        self.refused: list[int] = []          # frequencies the receiver would not tune to
+
+    def grid(self) -> np.ndarray:
+        s = self.settings
+        step = max(25, int(round(s.step_khz / 25)) * 25)        # receivers tune in 25 kHz steps
+        lo = -(-s.start_khz // 25) * 25
+        return np.arange(lo, s.stop_khz + 1, step, dtype=np.float64)
+
+    def check(self) -> None:
+        prof = self.driver.profile
+        pf = prof.param("frequency") if prof else None
+        pl = prof.param("rf_level") if prof else None
+        if not (pf and pf.writable and pl):
+            raise RuntimeError(f"{prof.model if prof else 'this device'} can't sweep: "
+                               "it needs a tunable frequency and an RF level readout")
+        if len(self.grid()) < 2:
+            raise ValueError("the range must cover at least two steps")
+
+    async def run(self) -> None:
+        self.check()
+        drv, ch = self.driver, self.channel
+        freqs = self.grid()
+        # Before touching the frequency: can this receiver report its RF level at
+        # all?  (An SLX-D rejects RX_RF_LVL — it must not be retuned for nothing.)
+        try:
+            if await drv.read(ch, "rf_level") is None:
+                raise RuntimeError("no value")
+        except Exception as e:  # noqa: BLE001
+            prof = drv.profile
+            raise RuntimeError(f"{prof.model if prof else 'this receiver'} doesn't report its RF "
+                               f"level ({e}) — it can't be used for a sweep. "
+                               "Its frequency was not changed.") from e
+        self.original_khz = await drv.read(ch, "frequency")
+        self.running = True
+        sweeps = 0
+        try:
+            while self.running:
+                levels = np.full(len(freqs), np.nan)
+                for i, f in enumerate(freqs):
+                    if not self.running:
+                        break
+                    try:
+                        await drv.set(ch, "frequency", int(f))
+                    except RefusedError:
+                        # the receiver can't tune there (e.g. 470.000 on a ULX-D G50):
+                        # leave the point blank and carry on
+                        self.refused.append(int(f))
+                        if len(self.refused) > len(freqs) // 2:
+                            raise RuntimeError(f"the receiver refused {len(self.refused)} of "
+                                               f"{len(freqs)} frequencies — is the range inside "
+                                               "its band?")
+                        continue
+                    await asyncio.sleep(self.settle_s)
+                    lvl = await drv.read(ch, "rf_level")
+                    levels[i] = np.nan if lvl is None else float(lvl)
+                    if i % 4 == 0 or i == len(freqs) - 1:
+                        self.on_status(f"Sweep {sweeps + 1}: {f / 1000:.3f} MHz ({i + 1}/{len(freqs)})")
+                        self._emit((freqs, levels.copy()))        # live: unmeasured points stay blank
+                sweeps += 1
+                if not self.continuous:
+                    break
+        finally:
+            self.running = False
+            if self.original_khz:
+                for _ in range(3):           # put the channel back, whatever happened
+                    try:
+                        await drv.set(ch, "frequency", int(self.original_khz))
+                        self.restored = True
+                        break
+                    except Exception:  # noqa: BLE001
+                        await asyncio.sleep(0.5)
+                self.on_status(f"Channel back on {self.original_khz / 1000:.3f} MHz"
+                               if self.restored else
+                               f"⚠ could not restore {self.original_khz / 1000:.3f} MHz — check the receiver!")
 
 
 BACKENDS = {"rtl": RtlPowerScanner, "sim": SimulatedScanner}

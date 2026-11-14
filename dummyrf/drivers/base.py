@@ -13,6 +13,12 @@ class DriverError(Exception):
     pass
 
 
+class RefusedError(DriverError):
+    """The device is reachable but would not take the value (out of range, locked …).
+    A ULX-D does not send ERR for a frequency it can't tune — it just answers
+    with its unchanged frequency."""
+
+
 @dataclass
 class DeviceState:
     model: str = ""
@@ -93,6 +99,10 @@ class Driver(ABC):
 
     @abstractmethod
     async def set(self, channel: int, key: str, value: Any) -> None: ...
+
+    async def read(self, channel: int, key: str) -> Any:
+        """Ask the device for one parameter of one channel (decoded)."""
+        raise DriverError(f"{type(self).__name__} can't read single values")
 
     @abstractmethod
     async def raw(self, command: str, listen: float = 0.6) -> list[str]:

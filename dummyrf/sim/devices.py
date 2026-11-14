@@ -47,6 +47,23 @@ def _live(p: Param, rnd: random.Random):
     return 0
 
 
+# A fixed little RF world for the simulators, so a receiver sweep finds something:
+# DVB-T multiplexes (8 MHz wide) and two narrow carriers on a -100 dBm floor.
+SIM_TV_MUXES_KHZ = [(490000, -66.0), (522000, -58.0), (562000, -70.0), (626000, -62.0)]
+SIM_CARRIERS_KHZ = [(505000, -48.0), (590000, -44.0)]
+
+
+def sim_rf_dbm(freq_khz: float, rnd: random.Random | None = None) -> float:
+    """RF level a simulated receiver measures when tuned to ``freq_khz``."""
+    lvl = -100.0
+    for centre, peak in SIM_TV_MUXES_KHZ:
+        if abs(freq_khz - centre) <= 3900:
+            lvl = max(lvl, peak)
+    for centre, peak in SIM_CARRIERS_KHZ:
+        lvl = max(lvl, peak - ((freq_khz - centre) / 60.0) ** 2)   # ~200 kHz receiver filter
+    return lvl + (rnd.gauss(0, 1.0) if rnd else 0.0)
+
+
 @dataclass
 class SimDevice:
     profile: ModelProfile
@@ -66,6 +83,9 @@ class SimDevice:
         self.values[(0, "fw_ver")] = "0.0.0-sim"
 
     def get(self, ch: int, p: Param):
+        if p.key == RF_LEVEL and (ch, FREQUENCY) in self.values:
+            # what the receiver hears at the frequency it is tuned to
+            return int(round(sim_rf_dbm(self.values[(ch, FREQUENCY)], self.rnd)))
         if p.key in LIVE_KEYS:
             return _live(p, self.rnd)
         return self.values.get((ch, p.key))

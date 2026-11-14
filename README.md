@@ -52,6 +52,19 @@ after changing the code.
   Giving it to others without warnings needs an Apple Developer ID to sign and notarise it.
 - The build matches your Mac's processor (Apple Silicon here). Windows needs its own build on a Windows PC.
 
+## Scanning with wireless receivers
+
+Shure receivers have no scan command over their network control port — the scan in Wireless Workbench
+uses Shure's own protocol. Two ways to use receiver scans anyway (Spectrum tab):
+
+- **Auto-load WWB scans** — scan with your receivers in WWB as usual; every scan WWB saves to
+  `~/Documents/Shure/Frequency Plots` (folder changeable under **WWB…**) appears in dummyRF within a few
+  seconds and can be used for coordination. **WWB… → Load latest WWB scan now** fetches the newest one.
+- **Receiver sweep (Shure)** — dummyRF retunes one receiver channel step by step across its band and reads
+  its RF level (`RX_RF_LVL`). Works on ULX-D (not SLX-D: it doesn't report the level; dummyRF checks this
+  before changing anything). The channel's audio is off during the sweep and its frequency is restored
+  afterwards. Slow (~0.4 s per step) and coarse (~200 kHz receiver filter) — use a spare channel.
+
 ## Finding devices on the network
 
 Devices tab → **Scan network…** (or Tools → Scan network, Ctrl+F). Pick the adapter connected to the RF

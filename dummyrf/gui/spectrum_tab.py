@@ -1,15 +1,19 @@
 """Spectrum tab: scans, carriers, exclusions and intermod products."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel,
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMenu,
                                QPushButton, QVBoxLayout, QWidget)
 
 from ..coordination import imd_products, mhz
 from ..scan import load_scan, synthetic_scan
 from . import dialogs
 from .context import AppContext
+from .wwb_watch import DEFAULT_FOLDER, WwbScanWatcher
 
 SCAN_COLORS = ["#4aa3df", "#9b59b6", "#16a085", "#d35400", "#7f8c8d"]
 CARRIER_COLORS = {"digital_mic": "#2ecc71", "analog_iem": "#f1c40f", "analog_mic": "#e67e22",
@@ -36,6 +40,21 @@ class SpectrumTab(QWidget):
         self.show_labels.toggled.connect(self.redraw)
         bar.addWidget(self.show_imd)
         bar.addWidget(self.show_labels)
+        # ---- receiver scans made in Wireless Workbench
+        self.wwb = WwbScanWatcher(parent=self)
+        self.wwb.new_scan.connect(self._wwb_scan)
+        self.wwb.failed.connect(lambda msg: self.info.setText(f"WWB scan not loaded: {msg}"))
+        cfg = QSettings("dummyRF", "dummyRF")
+        self.wwb.folder = Path(cfg.value("wwb/folder", str(DEFAULT_FOLDER)))
+        self.wwb_auto = QCheckBox("Auto-load WWB scans")
+        self.wwb_auto.setToolTip(f"Load every scan Wireless Workbench saves in\n{self.wwb.folder}\n"
+                                 "(scans made with Shure receivers)")
+        self.wwb_auto.toggled.connect(self._wwb_toggled)
+        wwb_more = QPushButton("WWB…")
+        wwb_more.setToolTip("Choose WWB's scan folder, or load the latest WWB scan now")
+        wwb_more.clicked.connect(self._wwb_menu)
+        bar.addWidget(self.wwb_auto)
+        bar.addWidget(wwb_more)
         bar.addStretch()
         self.info = QLabel()
         bar.addWidget(self.info)
@@ -64,6 +83,8 @@ class SpectrumTab(QWidget):
                     ctx.settings_changed):
             sig.connect(self.redraw)
         self.redraw()
+        if QSettings("dummyRF", "dummyRF").value("wwb/auto", False, type=bool):
+            self.wwb_auto.setChecked(True)
 
     # ------------------------------------------------------------ actions
     def load(self):
@@ -91,6 +112,47 @@ class SpectrumTab(QWidget):
         self.ctx.scans.clear()
         self.ctx.show_data.scan_paths.clear()
         self.ctx.scans_changed.emit()
+
+    # ------------------------------------------------------------ WWB scans
+    def _wwb_toggled(self, on: bool):
+        QSettings("dummyRF", "dummyRF").setValue("wwb/auto", on)
+        if on:
+            if not self.wwb.folder.is_dir():
+                self.info.setText(f"WWB folder not found: {self.wwb.folder}")
+            self.wwb.start()
+            self.info.setText(f"Waiting for new WWB scans in {self.wwb.folder.name}…")
+        else:
+            self.wwb.stop()
+
+    def _wwb_scan(self, scan):
+        self.ctx.scans.append(scan)
+        if scan.path and scan.path not in self.ctx.show_data.scan_paths:
+            self.ctx.show_data.scan_paths.append(scan.path)
+        self.ctx.scans_changed.emit()
+        self._fit()
+        self.info.setText(f"Loaded WWB scan: {scan.name}")
+
+    def _wwb_menu(self):
+        menu = QMenu(self)
+        menu.addAction("Load latest WWB scan now", self._wwb_latest)
+        menu.addAction(f"Scan folder: {self.wwb.folder} …", self._wwb_folder)
+        menu.exec(self.cursor().pos())
+
+    def _wwb_latest(self):
+        scan = self.wwb.load_latest()
+        if scan is None:
+            dialogs.information(self, "WWB scans", f"No .sdb3 scans found in\n{self.wwb.folder}")
+            return
+        self._wwb_scan(scan)
+
+    def _wwb_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "WWB scan folder", str(self.wwb.folder))
+        if d:
+            self.wwb.folder = Path(d)
+            QSettings("dummyRF", "dummyRF").setValue("wwb/folder", d)
+            self.wwb_auto.setToolTip(f"Load every scan Wireless Workbench saves in\n{d}")
+            if self.wwb.active:
+                self.wwb.start()
 
     def _fit(self):
         xs = [s.freqs_khz for s in self.ctx.scans] + \
