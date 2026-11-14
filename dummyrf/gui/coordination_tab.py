@@ -14,6 +14,7 @@ from ..coordination import (SPACING_PROFILES, CoordinationResult, Exclusion, Slo
 from . import dialogs
 from .site_search import attach_site_search
 from .context import AppContext
+from .fit import compact_combo
 
 COLS = ["Label", "Equipment", "Band low (MHz)", "Band high (MHz)", "Frequency (MHz)", "Fixed",
         "Linked device", "Check"]
@@ -66,15 +67,17 @@ class CoordinationTab(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.itemChanged.connect(self._item_changed)
 
-        btns = QHBoxLayout()
+        # two short rows instead of one long one: editing the list / running
+        edit_row = QHBoxLayout()
         for text, fn in [("Add slot", self.add_slot), ("Add from library…", self.add_from_library),
                          ("Remove", self.remove_slots),
                          ("Import from devices", self.import_devices),
-                         ("Clear unfixed freqs", self.clear_unfixed)]:
+                         ("Clear unfixed", self.clear_unfixed)]:
             b = QPushButton(text)
             b.clicked.connect(fn)
-            btns.addWidget(b)
-        btns.addStretch()
+            edit_row.addWidget(b)
+        edit_row.addStretch()
+        btns = QHBoxLayout()
         self.check_btn = QPushButton("Check")
         self.coord_btn = QPushButton("Coordinate")
         self.push_btn = QPushButton("Push to devices…")
@@ -84,10 +87,12 @@ class CoordinationTab(QWidget):
         self.push_btn.clicked.connect(self.push_to_devices)
         for b in (self.check_btn, self.coord_btn, self.push_btn):
             btns.addWidget(b)
+        btns.addStretch()
 
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
+        ll.addLayout(edit_row)
         ll.addLayout(btns)
         ll.addWidget(self.table)
 
@@ -140,11 +145,11 @@ class CoordinationTab(QWidget):
         r1.addWidget(add_rng)
         lib = library.get()
         r2 = QHBoxLayout()
-        self.plan = QComboBox()
+        self.plan = compact_combo()
         for key, plan in lib.plans.items():
             self.plan.addItem(f"{plan.type} ({plan.width_khz / 1000:g} MHz)", key)
         self.plan.addItem("US TV UHF (6 MHz, built-in)", "_us")
-        self.plan_ch = QComboBox()
+        self.plan_ch = compact_combo()
         self.plan.currentIndexChanged.connect(self._plan_changed)
         add_ch = QPushButton("Add channel")
         add_ch.clicked.connect(self.add_plan_channel)
@@ -152,7 +157,7 @@ class CoordinationTab(QWidget):
         r2.addWidget(self.plan_ch)
         r2.addWidget(add_ch)
         r3 = QHBoxLayout()
-        self.station = QComboBox()
+        self.station = compact_combo(30)
         self.station.setToolTip("All TV / DAB / FM transmitter sites from the loaded registers")
         self._sites = sorted(lib.sites, key=lambda st: (st.name, st.location))
         for i, st in enumerate(self._sites):
@@ -172,11 +177,14 @@ class CoordinationTab(QWidget):
         near.setEnabled(bool(lib.sites))
         r3.addWidget(self.station, 1)
         r3.addWidget(add_st)
-        r3.addWidget(near)
-        r3.addWidget(rem_ex)
+        r4 = QHBoxLayout()
+        r4.addWidget(near)
+        r4.addStretch()
+        r4.addWidget(rem_ex)
         el.addLayout(r1)
         el.addLayout(r2)
         el.addLayout(r3)
+        el.addLayout(r4)
         self._plan_changed()
 
         self.results = QPlainTextEdit()
@@ -236,7 +244,7 @@ class CoordinationTab(QWidget):
                     it.setFlags(it.flags() & ~Qt.ItemIsEditable)
                 return it
             self.table.setItem(r, 0, item(s.label))
-            combo = QComboBox()
+            combo = compact_combo()
             for key, p in SPACING_PROFILES.items():
                 combo.addItem(p.label, key)
             combo.setCurrentIndex(max(0, combo.findData(s.profile)))

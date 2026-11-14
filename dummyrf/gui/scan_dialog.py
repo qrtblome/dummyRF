@@ -5,13 +5,14 @@ import weakref
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout,
-                               QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar,
-                               QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QFormLayout, QHBoxLayout,
+                               QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout)
 
 from .. import discovery
 from ..show import DeviceSpec
 from . import dialogs
+from .fit import compact_combo, fit_to_screen, tame_combos
 from .context import AppContext
 
 FAMILY_LABEL = {"shure": "Shure", "sennheiser_g4": "Sennheiser G4"}
@@ -23,11 +24,10 @@ class ScanDialog(QDialog):
         super().__init__(parent)
         self.ctx = ctx
         self.setWindowTitle("Scan network for devices")
-        self.resize(820, 560)
         self._future = None
         self.found: list[discovery.Found] = []
 
-        self.iface = QComboBox()
+        self.iface = compact_combo(30)
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.load_interfaces)
         row_if = QHBoxLayout()
@@ -103,6 +103,8 @@ class ScanDialog(QDialog):
 
         self.iface.currentIndexChanged.connect(self._iface_changed)
         self.load_interfaces()
+        tame_combos(self)
+        fit_to_screen(self, 0.6, 0.65, max_w=900, max_h=640)
 
     # ------------------------------------------------------------ setup
     def load_interfaces(self):

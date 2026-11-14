@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel,
-                               QLineEdit, QSpinBox)
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit,
+                               QSpinBox)
 
 from .. import library
 from ..coordination import SPACING_PROFILES, Slot
 from ..profiles import ALL_MODELS
+from .fit import compact_combo, tame_combos
 
 
 @dataclass
@@ -47,13 +48,13 @@ class AddFromLibraryDialog(QDialog):
         self.setWindowTitle("Add equipment to inventory")
         self.items = choices()
         form = QFormLayout(self)
-        self.model = QComboBox()
+        self.model = compact_combo()
         for c in self.items:
             self.model.addItem(f"{c.label}  ({c.channels} ch/unit)", c)
-        self.band = QComboBox()
+        self.band = compact_combo()
         self.units = QSpinBox()
         self.units.setRange(1, 64)
-        self.spacing = QComboBox()
+        self.spacing = compact_combo()
         for key, p in SPACING_PROFILES.items():
             self.spacing.addItem(p.label, key)
         self.prefix = QLineEdit()
@@ -71,6 +72,7 @@ class AddFromLibraryDialog(QDialog):
         self.model.currentIndexChanged.connect(self._model_changed)
         self.units.valueChanged.connect(self._summary)
         self._model_changed()
+        tame_combos(self)
 
     def _model_changed(self):
         c: _Choice = self.model.currentData()

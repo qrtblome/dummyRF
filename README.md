@@ -57,7 +57,13 @@ To refresh it, download the current `pozwolenia_ntc_r_*.csv`, `pozwolenia_dab_r_
 python -m dummyrf.uke_import
 ```
 
-The `_h_` (history) files are not needed. Other countries can be added as further `transmitters_*.json`
+The `_h_` (history) files are not needed.
+
+**Venue position:** type a postal code (`60-685`), a town (`Poznań`, `srem`) or coordinates — looked up offline
+in `dummyrf/data/postcodes_pl.tsv.gz` (postal codes from [GeoNames](https://www.geonames.org), CC BY 4.0;
+refresh with `python -m dummyrf.geocode build PL.txt` from https://download.geonames.org/export/zip/PL.zip).
+For a street address or venue name, **Search online** asks OpenStreetMap Nominatim (© OpenStreetMap
+contributors); only what you type is sent, one request per click. Other countries can be added as further `transmitters_*.json`
 files in the same format, in `dummyrf/data/` or `~/.dummyrf/`.
 
 ## Notes

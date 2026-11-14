@@ -7,25 +7,12 @@ every typed word appears somewhere in the entry: "piat pozn" finds
 """
 from __future__ import annotations
 
-import unicodedata
-
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 from PySide6.QtWidgets import QComboBox, QCompleter
 
-_EXTRA = str.maketrans({"ł": "l", "Ł": "l", "ø": "o", "đ": "d", "ß": "ss"})
+from ..textfold import fold, matches
 
-
-def fold(text: str) -> str:
-    """Lower-case, diacritics removed: 'Łódź Śródmieście' -> 'lodz srodmiescie'."""
-    text = text.translate(_EXTRA)
-    text = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in text if not unicodedata.combining(c)).lower()
-
-
-def matches(entry: str, query: str) -> bool:
-    words = fold(query).split()
-    folded = fold(entry)
-    return all(w in folded for w in words)
+__all__ = ["attach_site_search", "fold", "matches"]
 
 
 class _FoldFilter(QSortFilterProxyModel):

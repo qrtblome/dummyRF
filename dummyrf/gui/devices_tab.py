@@ -15,6 +15,7 @@ from ..profiles import (BOOL, FAMILIES, FREQ, INT, STR, ModelProfile, Param,
 from ..show import DeviceSpec
 from . import dialogs
 from .context import AppContext
+from .fit import compact_combo
 
 COLS = ["Device / Ch", "Model / Name", "Frequency (MHz)", "Gain", "Mute", "RF power",
         "Battery", "RF (dBm)", "Audio", "Status"]
@@ -40,10 +41,10 @@ class AddDeviceDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Add device")
         form = QFormLayout(self)
-        self.family = QComboBox()
+        self.family = compact_combo()
         for key, (label, _) in FAMILIES.items():
             self.family.addItem(label, key)
-        self.model = QComboBox()
+        self.model = compact_combo()
         self.host = QLineEdit()
         self.host.setPlaceholderText("192.168.1.100")
         self.port = QSpinBox()
@@ -180,7 +181,7 @@ class ChannelEditor(QGroupBox):
                 w = QCheckBox()
                 w.toggled.connect(self._changed_now)
             else:
-                w = QComboBox()
+                w = compact_combo()
                 w.addItems(list(p.choices))
                 w.activated.connect(self._changed_now)
             self.widgets[p.key] = w

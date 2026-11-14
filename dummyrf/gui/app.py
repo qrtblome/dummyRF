@@ -5,7 +5,7 @@ import gc
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QTabWidget
 
@@ -17,6 +17,7 @@ from . import dialogs
 from .context import AppContext
 from .coordination_tab import CoordinationTab
 from .devices_tab import DevicesTab
+from .fit import fit_to_screen, keep_on_screen, tame_combos
 from .spectrum_tab import SpectrumTab
 
 APP_NAME = "dummyRF"
@@ -40,7 +41,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
         self._menus()
         self.manager.log.connect(lambda t: self.statusBar().showMessage(t, 5000))
-        self.resize(1400, 850)
+        tame_combos(self)
+        self._restore_geometry()
         self._title()
         if lib.errors:
             self.devices.append_log("Library problems:\n  " + "\n  ".join(lib.errors))
@@ -68,6 +70,14 @@ class MainWindow(QMainWindow):
         demo = QAction("Start demo rack (simulators)", self)
         demo.triggered.connect(self.devices.start_demo)
         tm.addAction(demo)
+
+    # ------------------------------------------------------------ geometry
+    def _restore_geometry(self):
+        geo = QSettings(APP_NAME, APP_NAME).value("window/geometry")
+        if geo is not None and self.restoreGeometry(geo):
+            keep_on_screen(self)
+        else:
+            fit_to_screen(self, 0.9, 0.9)
 
     def _title(self):
         self.setWindowTitle(f"{APP_NAME} — {self.path.name if self.path else 'untitled show'}")
@@ -130,6 +140,7 @@ class MainWindow(QMainWindow):
             self._title()
 
     def closeEvent(self, ev):
+        QSettings(APP_NAME, APP_NAME).setValue("window/geometry", self.saveGeometry())
         self.spectrum.scanner.shutdown()
         self.manager.shutdown()
         super().closeEvent(ev)

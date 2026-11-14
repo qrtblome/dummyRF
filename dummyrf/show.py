@@ -28,6 +28,7 @@ class Settings:
     poll_interval_s: float = 2.0
     venue_lat: float | None = None
     venue_lon: float | None = None
+    venue_label: str = ""
 
 
 @dataclass

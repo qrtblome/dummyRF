@@ -9,12 +9,13 @@ import weakref
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QGroupBox, QHBoxLayout,
-                               QLabel, QPushButton, QSpinBox, QVBoxLayout)
+from PySide6.QtWidgets import (QDoubleSpinBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel,
+                               QPushButton, QSpinBox, QVBoxLayout)
 
 from .. import rfscan
 from ..scan import Scan, write_csv, write_sdb3
 from . import dialogs
+from .fit import compact_combo, elastic
 from .context import AppContext
 
 LIVE_PEN = pg.mkPen("#7fb3ff", width=1)
@@ -38,12 +39,12 @@ class ScannerPanel(QGroupBox):
         self.live_curve = pg.PlotDataItem(pen=LIVE_PEN, name="live")
         self.peak_curve = pg.PlotDataItem(pen=PEAK_PEN, name="peak hold")
 
-        self.backend = QComboBox()
+        self.backend = compact_combo()
         self.backend.addItem("RTL-SDR (rtl_power)", "rtl")
         self.backend.addItem("Simulated scanner", "sim")
         self.start_mhz = self._mhz_box(470.0)
         self.stop_mhz = self._mhz_box(700.0)
-        self.step = QComboBox()
+        self.step = compact_combo()
         for k in (25, 50, 100, 200):
             self.step.addItem(f"{k} kHz", k)
         self.gain = QDoubleSpinBox()
@@ -77,19 +78,26 @@ class ScannerPanel(QGroupBox):
         self.save_btn.clicked.connect(self.save)
         self.status = QLabel("Idle.")
 
+        # three short rows so the panel never forces the window wider
         r1 = QHBoxLayout()
         for w in (self.backend, QLabel("from"), self.start_mhz, QLabel("to"), self.stop_mhz,
-                  from_inv, QLabel("resolution"), self.step, QLabel("gain"), self.gain,
-                  QLabel("offset"), self.offset, self.ppm):
+                  from_inv):
             r1.addWidget(w)
         r1.addStretch()
         r2 = QHBoxLayout()
-        for w in (self.run_btn, reset, self.use_btn, self.save_btn):
+        for w in (QLabel("resolution"), self.step, QLabel("gain"), self.gain,
+                  QLabel("offset"), self.offset, QLabel("correction"), self.ppm):
             r2.addWidget(w)
-        r2.addWidget(self.status, 1)
+        r2.addStretch()
+        r3 = QHBoxLayout()
+        for w in (self.run_btn, reset, self.use_btn, self.save_btn):
+            r3.addWidget(w)
+        r3.addWidget(self.status, 1)
+        elastic(self.status)
         lay = QVBoxLayout(self)
         lay.addLayout(r1)
         lay.addLayout(r2)
+        lay.addLayout(r3)
         self._update_buttons()
 
     @staticmethod
