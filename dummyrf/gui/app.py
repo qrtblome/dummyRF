@@ -1,9 +1,11 @@
 """Main window."""
 from __future__ import annotations
 
+import gc
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QTabWidget
 
@@ -128,13 +130,36 @@ class MainWindow(QMainWindow):
             self._title()
 
     def closeEvent(self, ev):
+        self.spectrum.scanner.shutdown()
         self.manager.shutdown()
         super().closeEvent(ev)
+
+
+def _gc_on_gui_thread(app: QApplication) -> None:
+    """Run Python's cycle collector only on the GUI thread.
+
+    Automatic collection can start on any thread that allocates — here the
+    asyncio I/O thread — and freeing Qt widgets there crashed PySide
+    (Shiboken::callCppDestructor<QComboBox> via mainThreadDeletionHandler).
+    Plain reference counting is unaffected; only cycles wait for the timer.
+    """
+    gc.disable()
+    ticks = 0
+
+    def collect():
+        nonlocal ticks
+        ticks += 1
+        gc.collect(2 if ticks % 10 == 0 else 0)
+
+    timer = QTimer(app)
+    timer.timeout.connect(collect)
+    timer.start(1000)
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    _gc_on_gui_thread(app)
     w = MainWindow()
     w.show()
     if "--demo" in sys.argv:

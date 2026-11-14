@@ -69,3 +69,37 @@ def test_scan_dead_addresses_is_quick():
         assert found == []
         return time.monotonic() - t0
     assert asyncio.run(go()) < 6
+
+
+def test_parse_arp_finds_shure_by_mac():
+    out = """? (192.168.0.3) at 0:e:dd:47:6f:d9 on en5 ifscope [ethernet]
+? (192.168.0.4) at 0:e:dd:47:70:e on en5 ifscope [ethernet]
+? (192.168.0.19) at 0:e:dd:24:46:8a on en5 ifscope [ethernet]
+? (192.168.0.20) at (incomplete) on en5 ifscope [ethernet]
+? (192.168.0.250) at f8:e4:3b:1f:2a:2 on en5 ifscope permanent [ethernet]
+? (192.168.0.255) at ff:ff:ff:ff:ff:ff on en5 ifscope [ethernet]
+"""
+    assert discovery.parse_arp_shure(out) == ["192.168.0.3", "192.168.0.4", "192.168.0.19"]
+
+
+def test_probe_retries_busy_device():
+    """A ULX-D with busy connection slots closes new connections without a word."""
+    async def go():
+        calls = 0
+
+        async def handler(r, w):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                w.close()          # busy: accept, then hang up
+                return
+            await r.read(100)
+            w.write(b"< REP MODEL {ULXD4D} >< REP DEVICE_ID {RACK} >< REP ERR >")
+            await w.drain()
+            w.close()
+        srv = await asyncio.start_server(handler, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        f = await discovery.probe_shure("127.0.0.1", port)
+        srv.close()
+        assert f and f.model == "ULXD4D" and calls == 2
+    asyncio.run(go())

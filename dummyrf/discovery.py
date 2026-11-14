@@ -139,14 +139,46 @@ def parse_ports(text: str) -> list[int]:
     return sorted(set(ports))
 
 
+SHURE_OUI = "00:0e:dd"   # MAC prefix of Shure network interfaces
+
+
+def shure_hosts_from_arp() -> list[str]:
+    """IPv4 addresses whose MAC in the ARP table belongs to Shure.
+
+    The sweep itself fills the ARP table, so call this after probing."""
+    try:
+        out = subprocess.run(["/usr/sbin/arp", "-an"], capture_output=True, text=True,
+                             timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    # Empty output can also mean macOS denied this program Local Network access.
+    return parse_arp_shure(out)
+
+
+def parse_arp_shure(out: str) -> list[str]:
+    hosts = []
+    for m in re.finditer(r"\(([\d.]+)\) at ([0-9a-fA-F:]+)", out):
+        mac = ":".join(part.zfill(2) for part in m.group(2).lower().split(":"))
+        if mac.startswith(SHURE_OUI):
+            hosts.append(m.group(1))
+    return hosts
+
+
 # ------------------------------------------------------------------ probes
-async def probe_shure(host: str, port: int, timeout: float = 0.6) -> Found | None:
+_RETRY = "retry"
+
+
+async def _probe_shure_once(host: str, port: int, timeout: float):
+    """Found, None (nothing Shure there) or _RETRY (refused / closed before answering)."""
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+    except ConnectionRefusedError:
+        return _RETRY
     except (OSError, asyncio.TimeoutError):
         return None
     info: dict[str, str] = {}
     replies = 0  # REP or ERR, one per question
+    got_data = False
     try:
         writer.write(b"< GET MODEL >< GET DEVICE_ID >< GET RF_BAND >")
         await writer.drain()
@@ -163,6 +195,7 @@ async def probe_shure(host: str, port: int, timeout: float = 0.6) -> Found | Non
                 break
             if not data:
                 break
+            got_data = True
             buf += data.decode("ascii", errors="replace")
             while (s := buf.find("<")) >= 0 and (e := buf.find(">", s)) >= 0:
                 msg = parse_message(buf[s + 1:e])
@@ -176,10 +209,28 @@ async def probe_shure(host: str, port: int, timeout: float = 0.6) -> Found | Non
     finally:
         writer.close()
     if "MODEL" not in info:
-        return None  # something listens on the port but it isn't a Shure device
+        # accepted then closed without a word: a busy Shure unit does that
+        return None if got_data else _RETRY
     prof = match_shure_model(info["MODEL"])
     return Found("shure", host, port, prof.model if prof else info["MODEL"], prof is not None,
                  info.get("DEVICE_ID", ""), info.get("RF_BAND", ""))
+
+
+async def probe_shure(host: str, port: int, timeout: float = 0.6, retries: int = 2) -> Found | None:
+    """Ask ``host:port`` for its Shure model.
+
+    A ULX-D has only a few TCP connection slots and a just-closed connection
+    holds one for a moment, so back-to-back probes are sometimes refused or
+    closed straight away (seen on a ULXD4D, fw 2.7.6).  Those cases are retried
+    after a short pause; silent addresses are not.
+    """
+    for attempt in range(retries + 1):
+        r = await _probe_shure_once(host, port, timeout)
+        if r is not _RETRY:
+            return r
+        if attempt < retries:
+            await asyncio.sleep(0.4 * (attempt + 1))
+    return None
 
 
 class _UdpCollector(asyncio.DatagramProtocol):
@@ -240,6 +291,21 @@ async def scan(hosts: Iterable[str], shure_ports: list[int], senn_ports: list[in
 
         res = await asyncio.gather(*(one(h, p) for h in hosts for p in shure_ports))
         found += [r for r in res if r]
+        # Second chance for Shure hardware the sweep missed (busy connection
+        # slots), recognised by the MAC prefix in the ARP table.
+        wanted = set(hosts)
+        have = {f.host for f in found}
+        missed = [ip for ip in shure_hosts_from_arp() if ip in wanted and ip not in have]
+        for ip in missed:
+            if progress:
+                progress(total, total, f"Shure (TCP) — retrying {ip}")
+            r = None
+            for port in shure_ports:
+                r = await probe_shure(ip, port, timeout=1.5, retries=3)
+                if r:
+                    break
+            found.append(r or Found("shure", ip, shure_ports[0], "Shure device — control port closed",
+                                    False))
     if senn_ports:
         n = len(hosts)
         found += await probe_sennheiser(

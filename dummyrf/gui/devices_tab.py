@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
@@ -89,7 +89,15 @@ class AddDeviceDialog(QDialog):
 
 
 class ChannelEditor(QGroupBox):
-    """Edits the writable parameters of one channel."""
+    """Edits the writable parameters of one channel.
+
+    Changes go to the device straight away (like WWB): toggles and lists on
+    change, gain shortly after the last arrow click, name and frequency when
+    you press Enter or leave the field.  Values follow the device while you're
+    not editing.
+    """
+
+    DEBOUNCE_MS = 350
 
     def __init__(self, ctx: AppContext):
         super().__init__("Channel")
@@ -99,35 +107,38 @@ class ChannelEditor(QGroupBox):
         self.profile: ModelProfile | None = None
         self.widgets: dict[str, QWidget] = {}
         self.original: dict[str, Any] = {}
+        self._loading = False
+        self._inflight = 0
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(self.DEBOUNCE_MS)
+        self._debounce.timeout.connect(self.apply)
         self.form = QFormLayout()
         lay = QVBoxLayout(self)
         self.info = QLabel("Select a channel to edit it.")
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
         lay.addLayout(self.form)
-        row = QHBoxLayout()
-        self.apply_btn = QPushButton("Apply")
-        self.revert_btn = QPushButton("Revert")
-        self.apply_btn.clicked.connect(self.apply)
-        self.revert_btn.clicked.connect(self.load_values)
-        row.addStretch()
-        row.addWidget(self.revert_btn)
-        row.addWidget(self.apply_btn)
-        lay.addLayout(row)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
         lay.addStretch()
-        self._set_enabled(False)
-
-    def _set_enabled(self, on: bool):
-        self.apply_btn.setEnabled(on)
-        self.revert_btn.setEnabled(on)
+        ctx.manager.device_changed.connect(self._device_changed)
 
     def clear(self):
+        self.flush()
         while self.form.rowCount():
             self.form.removeRow(0)
         self.widgets.clear()
         self.uid = None
         self.info.setText("Select a channel to edit it.")
-        self._set_enabled(False)
+        self.status.setText("")
+
+    def flush(self):
+        """Send an edit that is still waiting for the debounce timer."""
+        if self._debounce.isActive():
+            self._debounce.stop()
+            self.apply()
 
     def edit(self, uid: str, channel: int):
         entry = self.ctx.manager.entries.get(uid)
@@ -148,53 +159,81 @@ class ChannelEditor(QGroupBox):
                 w = QLineEdit()
                 if p.width:
                     w.setMaxLength(p.width)
+                w.editingFinished.connect(self.apply)
             elif p.kind == FREQ:
                 w = QDoubleSpinBox()
                 w.setDecimals(3)
                 w.setSingleStep(0.025)
                 w.setSuffix(" MHz")
-                if hi:
-                    w.setRange(lo / 1000, hi / 1000)
-                else:
-                    w.setRange(0, 3000)
+                w.setKeyboardTracking(False)
+                w.setRange(lo / 1000, hi / 1000) if hi else w.setRange(0, 3000)
+                # retuning drops audio: only on Enter / leaving the field
+                w.editingFinished.connect(self.apply)
             elif p.kind == INT:
                 w = QSpinBox()
                 w.setRange(p.lo if p.lo is not None else -1000, p.hi if p.hi is not None else 1000)
+                w.setKeyboardTracking(False)
                 if p.unit:
                     w.setSuffix(f" {p.unit}")
+                w.valueChanged.connect(self._changed_soon)
             elif p.kind == BOOL:
                 w = QCheckBox()
+                w.toggled.connect(self._changed_now)
             else:
                 w = QComboBox()
                 w.addItems(list(p.choices))
+                w.activated.connect(self._changed_now)
             self.widgets[p.key] = w
             self.form.addRow(p.label, w)
         self.info.setText(f"{self.profile.description}" + (f" · band {band} "
-                          f"({lo / 1000:.0f}–{hi / 1000:.0f} MHz)" if hi else ""))
+                          f"({lo / 1000:.0f}–{hi / 1000:.0f} MHz)" if hi else "")
+                          + "\nChanges are sent to the device immediately.")
         self.load_values()
-        self._set_enabled(True)
+
+    def _changed_soon(self, *_):
+        if not self._loading:
+            self._debounce.start()
+
+    def _changed_now(self, *_):
+        if not self._loading:
+            self._debounce.stop()
+            self.apply()
+
+    def _editing(self) -> bool:
+        return self._debounce.isActive() or self._inflight > 0 or any(
+            w.hasFocus() for w in self.widgets.values())
+
+    def _device_changed(self, uid: str):
+        # follow front-panel / other-software changes, but never under the user's cursor
+        if uid == self.uid and not self._editing():
+            self.load_values()
 
     def load_values(self):
         entry = self.ctx.manager.entries.get(self.uid or "")
         if not entry:
             return
         vals = entry.state.channels.get(self.channel, {})
-        self.original = {}
-        for key, w in self.widgets.items():
-            v = vals.get(key)
-            self.original[key] = v
-            if v is None:
-                continue
-            if isinstance(w, QLineEdit):
-                w.setText(str(v))
-            elif isinstance(w, QDoubleSpinBox):
-                w.setValue(v / 1000)
-            elif isinstance(w, QSpinBox):
-                w.setValue(int(v))
-            elif isinstance(w, QCheckBox):
-                w.setChecked(bool(v))
-            elif isinstance(w, QComboBox):
-                w.setCurrentText(str(v))
+        self._loading = True
+        try:
+            self.original = {}
+            for key, w in self.widgets.items():
+                v = vals.get(key)
+                self.original[key] = v
+                if v is None:
+                    continue
+                if isinstance(w, QLineEdit):
+                    if w.text() != str(v):
+                        w.setText(str(v))
+                elif isinstance(w, QDoubleSpinBox):
+                    w.setValue(v / 1000)
+                elif isinstance(w, QSpinBox):
+                    w.setValue(int(v))
+                elif isinstance(w, QCheckBox):
+                    w.setChecked(bool(v))
+                elif isinstance(w, QComboBox):
+                    w.setCurrentText(str(v))
+        finally:
+            self._loading = False
 
     def _value(self, key: str):
         w = self.widgets[key]
@@ -209,15 +248,33 @@ class ChannelEditor(QGroupBox):
         return w.currentText()
 
     def apply(self):
-        if not self.uid:
+        if not self.uid or self._loading:
             return
-        changed = {k: self._value(k) for k in self.widgets if self._value(k) != self.original.get(k)}
+        changed = {k: self._value(k) for k in self.widgets
+                   if self.original.get(k) is not None and self._value(k) != self.original.get(k)}
         if "frequency" in changed and changed["frequency"] % 25:
-            dialogs.warning(self, "Frequency", "Frequency must be on a 25 kHz step.")
+            self.status.setText("✗ Frequency must be on a 25 kHz step.")
+            self.load_values()
             return
+        uid, channel = self.uid, self.channel
         for key, val in changed.items():
-            self.ctx.manager.set_param(self.uid, self.channel, key, val)
+            label = self.profile.param(key).label
             self.original[key] = val
+            self._inflight += 1
+            self.status.setText(f"Sending {label}…")
+
+            def done(_res, err, key=key, label=label, val=val):
+                self._inflight -= 1
+                if (uid, channel) != (self.uid, self.channel):
+                    return  # user moved on to another channel
+                if err:
+                    self.status.setText(f"✗ {label} not set: {err}")
+                    self.original.pop(key, None)
+                    if not self._editing():
+                        self.load_values()   # show what the device really has
+                else:
+                    self.status.setText(f"✓ {label} set")
+            self.ctx.manager.set_param(uid, channel, key, val, done)
 
 
 class DevicesTab(QWidget):
@@ -225,6 +282,7 @@ class DevicesTab(QWidget):
         super().__init__()
         self.ctx = ctx
         self.items: dict[str, QTreeWidgetItem] = {}
+        self._scan_dialog = None
         m = ctx.manager
 
         bar = QHBoxLayout()
@@ -351,8 +409,13 @@ class DevicesTab(QWidget):
             self.ctx.manager.add_device(spec)
 
     def scan_network(self):
-        from .scan_dialog import ScanDialog
-        ScanDialog(self.ctx, self).exec()
+        # one dialog for the whole session: keeps the last results and avoids
+        # creating/destroying windows while a scan may still be finishing
+        if self._scan_dialog is None:
+            from .scan_dialog import ScanDialog
+            self._scan_dialog = ScanDialog(self.ctx, self)
+        self._scan_dialog._fill()
+        self._scan_dialog.exec()
 
     def remove_selected(self):
         sel = self._selected()

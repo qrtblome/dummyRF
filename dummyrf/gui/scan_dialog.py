@@ -1,6 +1,8 @@
 """Network scan dialog: pick an adapter, sweep its subnet, add what answers."""
 from __future__ import annotations
 
+import weakref
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout,
@@ -154,10 +156,22 @@ class ScanDialog(QDialog):
         self.status.setText(f"Scanning {len(hosts)} address(es)…")
         m = self.ctx.manager
 
-        def progress(done, total, phase):
-            m.call_in_gui(lambda: self._progress(done, total, phase))
+        # The scan runs on the I/O thread: refer to this dialog only weakly from
+        # there, so no reference cycle can keep it alive and get garbage-collected
+        # on the wrong thread (that crashed PySide).
+        me = weakref.ref(self)
 
-        self._future = m.submit(discovery.scan(hosts, sp, np_, progress), self._finished)
+        def progress(done, total, phase):
+            def update():
+                if (d := me()) is not None:
+                    d._progress(done, total, phase)
+            m.call_in_gui(update)
+
+        def finished(found, err):
+            if (d := me()) is not None:
+                d._finished(found, err)
+
+        self._future = m.submit(discovery.scan(hosts, sp, np_, progress), finished)
 
     def _progress(self, done: int, total: int, phase: str):
         self.progress.setRange(0, total)
@@ -165,6 +179,7 @@ class ScanDialog(QDialog):
         self.status.setText(f"{phase}: {done}/{total}")
 
     def _finished(self, found, err):
+        self._future = None
         self.scan_btn.setText("Scan")
         self.progress.setRange(0, 1)
         self.progress.setValue(1)

@@ -52,8 +52,12 @@ class SpectrumTab(QWidget):
         self.threshold.sigPositionChangeFinished.connect(self._threshold_moved)
         self.plot.scene().sigMouseMoved.connect(self._mouse)
 
+        from .scanner_panel import ScannerPanel
+        self.scanner = ScannerPanel(ctx, self)
+
         lay = QVBoxLayout(self)
         lay.addLayout(bar)
+        lay.addWidget(self.scanner)
         lay.addWidget(self.plot)
 
         for sig in (ctx.inventory_changed, ctx.exclusions_changed, ctx.scans_changed,
@@ -64,7 +68,7 @@ class SpectrumTab(QWidget):
     # ------------------------------------------------------------ actions
     def load(self):
         paths, _ = QFileDialog.getOpenFileNames(self, "Load scan", "",
-                                                "Scan files (*.csv *.txt *.sdb *.dat);;All files (*)")
+                                                "Scan files (*.sdb3 *.csv *.txt *.sdb *.dat);;All files (*)")
         errors = []
         for p in paths:
             try:
@@ -124,6 +128,8 @@ class SpectrumTab(QWidget):
         for i, s in enumerate(self.ctx.scans):
             pi.plot(s.freqs_khz / 1000, s.levels_dbm, name=s.name,
                     pen=pg.mkPen(SCAN_COLORS[i % len(SCAN_COLORS)], width=1))
+
+        self.scanner.attach(pi)
 
         if sd.settings.use_scan and self.ctx.scans:
             self.threshold.setValue(sd.settings.threshold_dbm)

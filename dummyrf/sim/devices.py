@@ -88,8 +88,10 @@ class SimDevice:
 
 # --------------------------------------------------------------------- Shure
 class ShureSimServer:
-    def __init__(self, dev: SimDevice, host: str = "127.0.0.1", port: int = 2202):
-        self.dev, self.host, self.port = dev, host, port
+    # A real ULXD4D takes ~0.09 s per command and works through them one at a time.
+    def __init__(self, dev: SimDevice, host: str = "127.0.0.1", port: int = 2202,
+                 delay: float = 0.09):
+        self.dev, self.host, self.port, self.delay = dev, host, port, delay
         self._server: asyncio.base_events.Server | None = None
         self._clients: set[asyncio.StreamWriter] = set()
 
@@ -147,10 +149,13 @@ class ShureSimServer:
             while data := await reader.read(4096):
                 buf += data.decode("ascii", errors="replace")
                 while (s := buf.find("<")) >= 0 and (e := buf.find(">", s)) >= 0:
-                    for line in self.handle(buf[s + 1:e]):
-                        writer.write(line.encode())
+                    msg = buf[s + 1:e]
                     buf = buf[e + 1:]
-                await writer.drain()
+                    if self.delay:
+                        await asyncio.sleep(self.delay)
+                    for line in self.handle(msg):
+                        writer.write(line.encode())
+                    await writer.drain()
         except (ConnectionError, OSError):
             pass
         finally:

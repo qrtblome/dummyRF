@@ -43,6 +43,7 @@ class Param:
     hi: int | None = None
     unit: str = ""
     choices: tuple[str, ...] = ()
+    unknown: tuple[str, ...] = ()  # raw values that mean "no data" (e.g. battery 255)
     true_raw: str = "ON"    # BOOL encodings
     false_raw: str = "OFF"
 
@@ -88,7 +89,7 @@ def _shure_rx_params(name_width: int, battery_cmd: str, has_mute: bool) -> tuple
         Param(FREQUENCY, "FREQUENCY", "Frequency", FREQ, width=6),
         Param(GAIN, "AUDIO_GAIN", "Gain", INT, offset=18, lo=-18, hi=42, unit="dB"),
         Param(GROUP_CHANNEL, "GROUP_CHAN", "Group/Ch", STR, writable=False),
-        Param(BATTERY, battery_cmd, "Battery", INT, writable=False, unit="bars"),
+        Param(BATTERY, battery_cmd, "Battery", INT, writable=False, unit="bars", unknown=("255",)),
         Param(RF_LEVEL, "RX_RF_LVL", "RF", INT, writable=False, offset=128, unit="dBm"),
         Param(AUDIO_LEVEL, "AUDIO_LVL", "Audio", INT, writable=False, offset=50, unit="dBFS"),
     ]
@@ -130,13 +131,16 @@ PSM1000_BANDS = {
     "K10E": _mhz(596, 668), "L8E": _mhz(626, 668),
 }
 
+# ULX-D rows checked against a real ULXD4D (fw 2.7.6, 2026-11-14): CHAN_NAME,
+# FREQUENCY, AUDIO_GAIN (+18), AUDIO_MUTE, GROUP_CHAN, BATT_BARS (255 = no
+# transmitter), RX_RF_LVL, AUDIO_LVL and GET 0 ALL work; RF_BAND is not supported.
 SHURE_MODELS = [
     ModelProfile("shure", "ULXD4", "Shure ULX-D single receiver", 1,
-                 _shure_rx_params(8, "BATT_BARS", False), ULXD_BANDS, "ulxd_norm", SHURE_DEVICE_PARAMS),
+                 _shure_rx_params(8, "BATT_BARS", True), ULXD_BANDS, "ulxd_norm", SHURE_DEVICE_PARAMS),
     ModelProfile("shure", "ULXD4D", "Shure ULX-D dual receiver", 2,
-                 _shure_rx_params(8, "BATT_BARS", False), ULXD_BANDS, "ulxd_norm", SHURE_DEVICE_PARAMS),
+                 _shure_rx_params(8, "BATT_BARS", True), ULXD_BANDS, "ulxd_norm", SHURE_DEVICE_PARAMS),
     ModelProfile("shure", "ULXD4Q", "Shure ULX-D quad receiver", 4,
-                 _shure_rx_params(8, "BATT_BARS", False), ULXD_BANDS, "ulxd_norm", SHURE_DEVICE_PARAMS),
+                 _shure_rx_params(8, "BATT_BARS", True), ULXD_BANDS, "ulxd_norm", SHURE_DEVICE_PARAMS),
     ModelProfile("shure", "QLXD4", "Shure QLX-D receiver", 1,
                  _shure_rx_params(8, "BATT_BARS", False), QLXD_BANDS, "qlxd_norm", SHURE_DEVICE_PARAMS),
     ModelProfile("shure", "SLXD4", "Shure SLX-D single receiver", 1,

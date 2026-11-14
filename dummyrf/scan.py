@@ -1,6 +1,7 @@
 """Scan file import.
 
-Accepts the common text/CSV layouts: Shure Wireless Workbench CSV export,
+Accepts Shure Wireless Workbench 7 binary scans (.sdb3) and the common
+text/CSV layouts: Shure Wireless Workbench CSV export,
 RF Explorer CSV, Sennheiser WSM/CSV exports and plain "frequency, level"
 files.  Each data line must contain a frequency and a level as its first two
 numbers; header and comment lines are skipped.  The frequency unit is guessed
@@ -8,6 +9,7 @@ from magnitude (Hz, kHz or MHz).
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,10 +82,110 @@ def parse_scan_text(text: str, name: str = "scan") -> Scan:
     return Scan(name, f, lv)
 
 
+SDB3_MAGIC = b"//@ShureScan"
+
+
+def parse_sdb3(data: bytes, name: str = "scan") -> Scan:
+    """Shure Wireless Workbench 7 scan file (.sdb3).
+
+    Layout (seen in files written by WWB 7.8.1)::
+
+        //@ShureScan
+        { JSON header: AmplUnits, FreqUnits, BitWidth, "Scale Factor",
+          NoDataValue, BinarySchema [...] }
+        @Binary:
+        sweep, sweep, ...          each laid out as BinarySchema says:
+                                   "@Swp", id, timestamp (4 bytes each),
+                                   one signed big-endian BitWidth value per
+                                   frequency point of every FreqRange, crc16
+        @Extended:
+        { JSON: Band, Channel, ScanName, AppendedSpecialSweeps, ... }
+        @End ...
+
+    All sweeps (the scan and WWB's appended peak hold) are combined by max-hold.
+    """
+    if not data.startswith(SDB3_MAGIC):
+        raise ValueError(f"{name}: not a WWB .sdb3 scan")
+    k = data.find(b"@Binary:")
+    if k < 0:
+        raise ValueError(f"{name}: no @Binary section")
+    try:
+        hdr = json.loads(data[data.index(b"{"):k].decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as e:
+        raise ValueError(f"{name}: bad .sdb3 header: {e}") from e
+    freq_mult = {"hz": 0.001, "khz": 1.0, "mhz": 1000.0}.get(str(hdr.get("FreqUnits", "KHz")).lower())
+    if freq_mult is None:
+        raise ValueError(f"{name}: unknown FreqUnits {hdr.get('FreqUnits')!r}")
+    width = int(hdr.get("BitWidth", 16)) // 8
+    scale = float(hdr.get("Scale Factor", 1)) or 1.0
+    nodata = hdr.get("NoDataValue")
+
+    # walk the schema once to get the record layout
+    layout = []          # ("skip", n) | ("curve", freqs ndarray)
+    freqs_all = []
+    for field_ in hdr.get("BinarySchema", []):
+        if "Curve" in field_:
+            fr = []
+            for r in field_["Curve"].get("FreqRanges", []):
+                n = (int(r["EndFreq"]) - int(r["StartFreq"])) // int(r["StepFreq"]) + 1
+                fr.append(np.arange(n) * float(r["StepFreq"]) + float(r["StartFreq"]))
+            f = np.concatenate(fr) * freq_mult if fr else np.array([])
+            layout.append(("curve", f))
+            freqs_all.append(f)
+        else:
+            layout.append(("skip", int(field_.get("Bytes", 0))))
+    if not freqs_all:
+        raise ValueError(f"{name}: .sdb3 has no curve in its schema")
+    rec_len = sum(v if kind == "skip" else len(v) * width for kind, v in layout)
+    dtype = np.dtype(f">i{width}")
+
+    body = data[k + len(b"@Binary:"):]
+    pos, best = 0, None
+    while body.startswith(b"@Swp", pos) and pos + rec_len <= len(body):
+        values = []
+        q = pos
+        for kind, v in layout:
+            if kind == "skip":
+                q += v
+            else:
+                raw = np.frombuffer(body, dtype=dtype, count=len(v), offset=q).astype(np.float64)
+                if nodata is not None:
+                    raw[raw == nodata] = np.nan
+                values.append(raw / scale)
+                q += len(v) * width
+        sweep = np.concatenate(values)
+        best = sweep if best is None else np.fmax(best, sweep)
+        pos += rec_len
+    if best is None:
+        raise ValueError(f"{name}: .sdb3 contains no sweeps")
+
+    ext = {}
+    e = body.find(b"@Extended:", pos)
+    if e >= 0:
+        try:
+            end = body.index(b"@End", e)
+            ext = json.loads(body[e + len(b"@Extended:"):end].decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            ext = {}
+    title = (ext.get("ScanName") or [None])[0] or hdr.get("Title") or name
+    model = hdr.get("ScannerModel") or ""
+    band = ext.get("Band") or ""
+    tag = f"({model} {band})".replace(" )", ")") if model else ""
+    label = title if not tag or tag in title else f"{title} {tag}"
+
+    freqs = np.concatenate(freqs_all)
+    ok = ~np.isnan(best)
+    order = np.argsort(freqs[ok], kind="stable")
+    return Scan(label, freqs[ok][order], best[ok][order])
+
+
 def load_scan(path: str | Path) -> Scan:
     p = Path(path)
-    text = p.read_text(encoding="utf-8", errors="replace")
-    sc = parse_scan_text(text, p.stem)
+    data = p.read_bytes()
+    if data.startswith(SDB3_MAGIC):
+        sc = parse_sdb3(data, p.stem)
+    else:
+        sc = parse_scan_text(data.decode("utf-8", errors="replace"), p.stem)
     sc.path = str(p)
     return sc
 
@@ -118,3 +220,75 @@ def synthetic_scan(lo_khz: int = 470000, hi_khz: int = 700000, seed: int = 1) ->
         c = rng.uniform(lo_khz, hi_khz)
         lv += 40 * np.exp(-((f - c) / 30) ** 2) * (rng.random() > 0.3)
     return Scan("synthetic demo scan", f, lv)
+
+
+# ------------------------------------------------------------------ export
+def crc16_arc(data: bytes) -> int:
+    """CRC-16/ARC (poly 0x8005 reflected, init 0) — what WWB puts after each
+    .sdb3 sweep, computed over the record from "@Swp" to the last value."""
+    crc = 0
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
+
+
+def _regrid(scan: Scan, step_khz: int) -> tuple[int, np.ndarray]:
+    """Put a scan on an exact kHz grid (max of the points in each bin)."""
+    start = int(np.ceil(scan.freqs_khz[0] / step_khz) * step_khz)
+    stop = int(np.floor(scan.freqs_khz[-1] / step_khz) * step_khz)
+    grid = np.arange(start, stop + 1, step_khz, dtype=np.float64)
+    out = np.interp(grid, scan.freqs_khz, scan.levels_dbm)
+    idx = np.clip(np.round((scan.freqs_khz - start) / step_khz).astype(int), 0, len(grid) - 1)
+    inside = (scan.freqs_khz >= start - step_khz / 2) & (scan.freqs_khz <= stop + step_khz / 2)
+    np.maximum.at(out, idx[inside], scan.levels_dbm[inside])
+    return start, out
+
+
+def write_sdb3(scan: Scan, path: str | Path, step_khz: int = 25, scanner: str = "dummyRF",
+               when=None) -> None:
+    """Write ``scan`` as a WWB 7 .sdb3 file (one sweep)."""
+    import datetime
+    when = when or datetime.datetime.now()
+    start, vals = _regrid(scan, step_khz)
+    stop = start + (len(vals) - 1) * step_khz
+    nodata = -1400
+    raw = np.where(np.isnan(vals), nodata, np.clip(np.round(vals * 10), -32768, 32767)).astype(">i2")
+    hdr = {
+        "AmplUnits": "dBm",
+        "BinarySchema": [
+            {"Bytes": 4, "DataValue": "start-of-sweep"},
+            {"Bytes": 4, "DataValue": "id"},
+            {"Bytes": 4, "DataValue": "timestamp"},
+            {"Curve": {"Color": "#6692fc", "CoordinationSource": True,
+                       "FreqRanges": [{"EndFreq": stop, "StartFreq": start, "StepFreq": step_khz}],
+                       "Name": "Default curve", "ResolutionBandWidth": step_khz}},
+            {"Bytes": 2, "DataValue": "crc16"},
+        ],
+        "BitWidth": 16,
+        "FreqUnits": "KHz",
+        "NoDataValue": nodata,
+        "Scale Factor": 10,
+        "ScannerModel": scanner,
+        "ScannerName": scanner,
+        "StartDate": when.strftime("%m/%d/%Y"),
+        "StartTime": when.strftime("%H:%M:%S"),
+        "Title": scan.name,
+        "Version": "1.0.0.0",
+    }
+    record = b"@Swp" + (1).to_bytes(4, "big") + (0).to_bytes(4, "big") + raw.tobytes()
+    record += crc16_arc(record).to_bytes(2, "big")
+    ext = {"Creator": "dummyRF", "ScanName": [scan.name], "UserCurveColors": ["#6692fc"]}
+    data = (SDB3_MAGIC + b"\n" + json.dumps(hdr, indent="\t", separators=(",", " : ")).encode()
+            + b"\n@Binary:" + record
+            + b"@Extended:\n" + json.dumps(ext, indent="\t", separators=(",", " : ")).encode()
+            + b"\n@End" + (1).to_bytes(4, "big") + (1).to_bytes(4, "big"))
+    Path(path).write_bytes(data)
+
+
+def write_csv(scan: Scan, path: str | Path) -> None:
+    lines = ["Frequency (MHz),Level (dBm)"]
+    lines += [f"{f / 1000:.4f},{lv:.1f}" for f, lv in zip(scan.freqs_khz, scan.levels_dbm)
+              if not np.isnan(lv)]
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")

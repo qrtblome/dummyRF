@@ -95,3 +95,49 @@ def test_sennheiser_no_device():
         with pytest.raises(DriverError):
             await drv.connect()
     run(go())
+
+
+def test_shure_slow_device_dual_channel_and_set_during_refresh():
+    """Regression: a real ULXD4D answers ~0.09 s per command, one at a time.
+    Channel 2 used to time out and gain SETs were lost behind the refresh burst."""
+    import time
+
+    from dummyrf.drivers.shure import _Unsupported
+
+    async def go():
+        srv = make_server(SimSpec("ULXD4D", "G51", 0, "slow"))
+        srv.port, srv.delay = 0, 0.09
+        await srv.start()
+        port = srv._server.sockets[0].getsockname()[1]
+        drv = make_driver("shure", "127.0.0.1", port, "auto")
+        await drv.connect()
+        t0 = time.monotonic()
+        st = await drv.refresh()
+        assert time.monotonic() - t0 < 2.0
+        for ch in (1, 2):
+            assert st.channels[ch].get("name") == f"CH {ch}"
+            assert st.channels[ch].get("frequency")
+            assert "gain" in st.channels[ch] and "mute" in st.channels[ch]
+        # a SET issued while a refresh is running must still get through
+        refresh = asyncio.create_task(drv.refresh())
+        await asyncio.sleep(0.05)
+        await drv.set(2, "gain", 12)
+        await refresh
+        assert srv.dev.values[(2, "gain")] == 12
+        assert (await drv.refresh()).channels[2]["gain"] == 12
+        # an ERR is matched to the command in flight straight away
+        t0 = time.monotonic()
+        with pytest.raises(_Unsupported):
+            await drv._query(1, "NOT_A_COMMAND")
+        assert time.monotonic() - t0 < 0.5
+        await drv.close()
+        await srv.stop()
+    run(go())
+
+
+def test_battery_unknown_value():
+    from dummyrf.drivers.base import decode_value
+    from dummyrf.profiles import ALL_MODELS
+    p = ALL_MODELS["ULXD4D"].param("battery")
+    assert decode_value(p, "255") is None
+    assert decode_value(p, "004") == 4

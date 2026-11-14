@@ -73,3 +73,40 @@ def test_parse_scan_formats():
     assert s.freqs_khz[1] == 470025 and s.levels_dbm[0] == -99.5
     grid, lv = combine_max([s, Scan("b", np.array([470010.0]), np.array([-40.0]))])
     assert lv.max() == -40
+
+
+def _make_sdb3(sweeps, start=562125, end=562250, step=25, nodata=-1400):
+    """Build a .sdb3 the way WWB 7.8 lays it out."""
+    import json
+    import struct
+    hdr = {"AmplUnits": "dBm", "BitWidth": 16, "FreqUnits": "KHz", "NoDataValue": nodata,
+           "Scale Factor": 10, "ScannerModel": "SLXD4D", "Title": "New scan 1",
+           "BinarySchema": [{"Bytes": 4, "DataValue": "start-of-sweep"},
+                            {"Bytes": 4, "DataValue": "id"},
+                            {"Bytes": 4, "DataValue": "timestamp"},
+                            {"Curve": {"FreqRanges": [{"StartFreq": start, "EndFreq": end,
+                                                       "StepFreq": step}]}},
+                            {"Bytes": 2, "DataValue": "crc16"}]}
+    out = b"//@ShureScan\n" + json.dumps(hdr, indent=1).encode() + b"\n@Binary:"
+    for i, sw in enumerate(sweeps, 1):
+        out += b"@Swp" + struct.pack(">II", i, 0) + struct.pack(f">{len(sw)}h", *sw) + b"\0\0"
+    ext = {"Band": "J53", "ScanName": ["huj"]}
+    return out + b"@Extended:\n" + json.dumps(ext).encode() + b"\n@End\0\0\0\1\0\0\0\2"
+
+
+def test_parse_sdb3():
+    from dummyrf.scan import parse_sdb3
+    scan = [-1020, -1000, -1400, -990, -1010, -980]    # dBm x10, -1400 = no data
+    peak = [-1000, -950, -1400, -990, -600, -980]       # WWB's appended peak hold
+    s = parse_sdb3(_make_sdb3([scan, peak]))
+    assert s.name == "huj (SLXD4D J53)"
+    assert list(s.freqs_khz) == [562125, 562150, 562200, 562225, 562250]   # no-data point dropped
+    assert list(s.levels_dbm) == [-100.0, -95.0, -99.0, -60.0, -98.0]     # max-hold of both sweeps
+
+
+def test_load_scan_detects_sdb3(tmp_path):
+    from dummyrf.scan import load_scan
+    f = tmp_path / "x.sdb3"
+    f.write_bytes(_make_sdb3([[-1000, -900, -800, -700, -600, -500]]))
+    s = load_scan(f)
+    assert s.levels_dbm.max() == -50.0 and s.path == str(f)

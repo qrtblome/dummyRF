@@ -25,6 +25,8 @@ def decode_value(p: Param, raw: str) -> Any:
     raw = raw.strip()
     if raw.startswith("{") and raw.endswith("}"):
         raw = raw[1:-1].strip()
+    if raw in p.unknown:
+        return None
     try:
         if p.kind == STR:
             return raw
