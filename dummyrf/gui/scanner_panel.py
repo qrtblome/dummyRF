@@ -43,6 +43,7 @@ class ScannerPanel(QGroupBox):
         self.backend.addItem("RTL-SDR (rtl_power)", "rtl")
         self.backend.addItem("Simulated scanner", "sim")
         self.backend.addItem("Receiver sweep (Shure)", "rx")
+        self.backend.addItem("SLX-D scan (native)", "acn")
         self.backend.setToolTip("Receiver sweep: retunes one receiver channel across its band and\n"
                                 "reads its RF level — slow and coarse, and that channel's audio\n"
                                 "is off while it runs. Use a channel whose transmitter is off.")
@@ -131,14 +132,16 @@ class ScannerPanel(QGroupBox):
     def _backend_changed(self, *_):
         kind = self.backend.currentData()
         rx = kind == "rx"
-        self.receiver.setVisible(rx)
-        self.receiver_lbl.setVisible(rx)
+        uses_receiver = kind in ("rx", "acn")
+        self.receiver.setVisible(uses_receiver)
+        self.receiver_lbl.setVisible(uses_receiver)
         keep = self.step.currentData()
         self.step.clear()
         for k in ((100, 250, 500, 1000) if rx else (25, 50, 100, 200)):
             self.step.addItem(f"{k} kHz", k)
-        self.step.setCurrentIndex(max(0, self.step.findData(500 if rx else keep or 25)))
-        if rx:
+        self.step.setCurrentIndex(max(0, self.step.findData(500 if rx else 25 if kind == "acn"
+                                                            else keep or 25)))
+        if uses_receiver:
             self._refresh_receivers()
             self._receiver_chosen()
         self._update_buttons()
@@ -150,9 +153,14 @@ class ScannerPanel(QGroupBox):
             prof = e.driver.profile
             if e.status != "online" or not prof:
                 continue
-            pf, pl = prof.param("frequency"), prof.param("rf_level")
-            if not (pf and pf.writable and pl):
-                continue
+            if self.backend.currentData() == "acn":
+                # native scan: SLX-D receivers (their own scan, over ACN)
+                if e.spec.family != "shure" or not prof.model.startswith("SLXD"):
+                    continue
+            else:
+                pf, pl = prof.param("frequency"), prof.param("rf_level")
+                if not (pf and pf.writable and pl):
+                    continue
             for ch in range(1, prof.channels + 1):
                 vals = e.state.channels.get(ch, {})
                 f = vals.get("frequency")
@@ -222,6 +230,33 @@ class ScannerPanel(QGroupBox):
         self._sweep_uid = uid
         return sc
 
+    def _start_slxd_scan(self, st, on_sweep, on_status) -> rfscan.Scanner | None:
+        sel = self.receiver.currentData()
+        if not sel:
+            dialogs.warning(self, "SLX-D scan", "No SLX-D receiver online — add it in the Devices tab first.")
+            return None
+        uid, ch = sel
+        m = self.ctx.manager
+        e = m.entries.get(uid)
+        if not e or e.status != "online":
+            dialogs.warning(self, "SLX-D scan", "That receiver is offline.")
+            return None
+        st.step_khz = max(25, int(round(st.step_khz / 25)) * 25)
+        n = (st.stop_khz - st.start_khz) // st.step_khz + 1
+        secs = n * 0.036                    # a real SLXD4D: 1751 points in ~62 s
+        cur = e.state.channels.get(ch, {})
+        name = cur.get("name") or f"channel {ch}"
+        f = cur.get("frequency")
+        back = f" and goes back to {f / 1000:.3f} MHz" if f else ""
+        text = (f"{m.name(uid)} · {name} will run its own RF scan across {st.start_khz / 1000:g}–"
+                f"{st.stop_khz / 1000:g} MHz in {st.step_khz} kHz steps (about {secs:.0f} s).\n\n"
+                "That channel's audio is OFF during the scan, as with a scan in Wireless Workbench. "
+                f"The receiver finishes{back} by itself.")
+        if dialogs.question(self, "SLX-D scan", text) != dialogs.QMessageBox.Yes:
+            return None
+        self._acn_uid = uid
+        return rfscan.SlxdAcnScanner(st, on_sweep, on_status, host=e.spec.host, channel=ch)
+
     # ------------------------------------------------------------ actions
     def range_from_inventory(self):
         inv = self.ctx.show_data.inventory
@@ -250,7 +285,7 @@ class ScannerPanel(QGroupBox):
         st = self.settings()
         kind = self.backend.currentData()
         try:
-            if kind != "rx":
+            if kind not in ("rx", "acn"):
                 st.validate()
         except ValueError as e:
             dialogs.warning(self, "RF scanner", str(e))
@@ -274,8 +309,9 @@ class ScannerPanel(QGroupBox):
                 p._finished(err)
 
         self.reset_peak()
-        if kind == "rx":
-            sc = self._start_receiver_sweep(st, on_sweep, on_status)
+        if kind in ("rx", "acn"):
+            sc = (self._start_receiver_sweep(st, on_sweep, on_status) if kind == "rx"
+                  else self._start_slxd_scan(st, on_sweep, on_status))
             if sc is None:
                 return
             self.scanner = sc
@@ -298,6 +334,17 @@ class ScannerPanel(QGroupBox):
         if uid:
             self.ctx.manager.paused.discard(uid)
             self._sweep_uid = None
+        if isinstance(self.scanner, rfscan.SlxdAcnScanner):
+            sc = self.scanner
+            if err is None and sc.completed:
+                self.status.setText("SLX-D scan complete — the receiver is back on its frequency.")
+            elif err is None:
+                self.status.setText("Stopped. The receiver finishes its scan on its own and then tunes back.")
+            else:
+                self.status.setText(f"SLX-D scan failed: {str(err).splitlines()[0]}")
+                dialogs.warning(self, "SLX-D scan", f"The scan stopped:\n\n{err}")
+            self._update_buttons()
+            return
         if isinstance(self.scanner, rfscan.ReceiverSweepScanner):
             sc = self.scanner
             back = (f" Channel back on {sc.original_khz / 1000:.3f} MHz." if sc.restored else
@@ -326,7 +373,8 @@ class ScannerPanel(QGroupBox):
             self.live_curve.setData(f / 1000, v)
             self.peak_curve.setData(self.peak.freqs / 1000, self.peak.levels)
         if (self.scanner and self.scanner.running
-                and not isinstance(self.scanner, rfscan.ReceiverSweepScanner)):
+                and not isinstance(self.scanner, (rfscan.ReceiverSweepScanner,
+                                                  rfscan.SlxdAcnScanner))):
             self.status.setText(f"Scanning — {self.peak.sweeps} sweep(s), "
                                 f"peak {np.nanmax(self.peak.levels):.1f} dB")
         self._update_buttons()
@@ -352,6 +400,9 @@ class ScannerPanel(QGroupBox):
 
     def _source_name(self) -> str:
         kind = self.backend.currentData()
+        if kind == "acn" and isinstance(self.scanner, rfscan.SlxdAcnScanner):
+            e = self.ctx.manager.entries.get(getattr(self, "_acn_uid", ""))
+            return f"{e.driver.profile.model if e and e.driver.profile else 'SLX-D'} scan"
         if kind == "rx" and isinstance(self.scanner, rfscan.ReceiverSweepScanner):
             prof = self.scanner.driver.profile
             return f"{prof.model if prof else 'Receiver'} sweep"

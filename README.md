@@ -54,12 +54,16 @@ after changing the code.
 
 ## Scanning with wireless receivers
 
-Shure receivers have no scan command over their network control port — the scan in Wireless Workbench
-uses Shure's own protocol. Two ways to use receiver scans anyway (Spectrum tab):
+Shure receivers have no scan command over their command-string port; Wireless Workbench scans over ACN.
+Three ways to use receiver scans (Spectrum tab):
 
 - **Auto-load WWB scans** — scan with your receivers in WWB as usual; every scan WWB saves to
   `~/Documents/Shure/Frequency Plots` (folder changeable under **WWB…**) appears in dummyRF within a few
   seconds and can be used for coordination. **WWB… → Load latest WWB scan now** fetches the newest one.
+- **SLX-D scan (native)** — runs the SLX-D's own RF scan without WWB, over ACN (ANSI E1.17, the protocol
+  WWB uses): dummyRF finds the receiver by its announcement, opens a session, starts the scan on the chosen
+  channel and streams the results (dBm per 25 kHz) as they arrive — about a minute for a whole band. The
+  channel's audio is off during the scan, as in WWB; the receiver tunes back by itself. Code: `dummyrf/acn/`.
 - **Receiver sweep (Shure)** — dummyRF retunes one receiver channel step by step across its band and reads
   its RF level (`RX_RF_LVL`). Works on ULX-D (not SLX-D: it doesn't report the level; dummyRF checks this
   before changing anything). The channel's audio is off during the sweep and its frequency is restored

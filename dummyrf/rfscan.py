@@ -371,4 +371,71 @@ class ReceiverSweepScanner(Scanner):
                                f"⚠ could not restore {self.original_khz / 1000:.3f} MHz — check the receiver!")
 
 
+class SlxdAcnScanner(Scanner):
+    """SLX-D's own RF scan, run over ACN like Wireless Workbench does it.
+
+    The receiver is found by its SLP announcement (session port + CID), a
+    session is opened, the scan runs on one channel — which is off its
+    frequency meanwhile; the receiver tunes back by itself when done — and
+    the results stream in as the receiver measures them.
+    """
+    name = "SLX-D scan (native)"
+
+    def __init__(self, settings: ScanSettings, on_sweep: SweepCallback,
+                 on_status: Callable[[str], None] | None = None, *, host: str, channel: int,
+                 announce_s: float = 9.0, sdt_port: int | None = None, cid: str | None = None):
+        super().__init__(settings, on_sweep, on_status)
+        self.host, self.channel = host, channel
+        self.announce_s = announce_s
+        self.sdt_port, self.cid = sdt_port, cid
+        self.session = None
+        self.result = None
+        self.completed = False
+
+    async def run(self) -> None:
+        from .acn import discovery
+        from .acn.session import AcnSession
+        from .acn.slxd import SlxdScan
+
+        self.running = True
+        s = self.settings
+        try:
+            if not (self.sdt_port and self.cid):
+                self.on_status("Looking for the receiver's ACN announcement…")
+                ann = await discovery.find(self.host, self.announce_s)
+                if ann is None:
+                    raise RuntimeError(f"no ACN announcement from {self.host} — is it on this network "
+                                       "(and not blocked by the Mac's Local Network setting)?")
+                self.sdt_port, self.cid = ann.sdt_port, ann.cid
+            self.on_status(f"Opening a session with {self.host}…")
+            self.session = AcnSession(self.host, self.sdt_port, self.cid)
+            await self.session.connect()
+
+            def data(res):
+                self.result = res
+                self._emit((res.freqs_khz, res.levels_dbm.copy()))
+
+            def progress(pct):
+                self.on_status(f"Receiver scanning channel {self.channel}: {pct} %")
+
+            step = max(25, int(round(s.step_khz / 25)) * 25)
+            scan = SlxdScan(self.session, self.channel, s.start_khz, s.stop_khz, step,
+                            on_data=data, on_progress=progress)
+            self.on_status(f"Receiver scanning channel {self.channel}: starting…")
+            task = asyncio.create_task(scan.run())
+            while not task.done():
+                if not self.running:          # Stop pressed: leave; the receiver finishes on its own
+                    task.cancel()
+                    break
+                await asyncio.sleep(0.2)
+            if task.done() and not task.cancelled():
+                self.result = task.result()
+                self.completed = True
+                self._emit((self.result.freqs_khz, self.result.levels_dbm.copy()))
+        finally:
+            self.running = False
+            if self.session is not None:
+                await self.session.close()
+
+
 BACKENDS = {"rtl": RtlPowerScanner, "sim": SimulatedScanner}
