@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleS
 from .. import library
 from ..coordination import (SPACING_PROFILES, CoordinationResult, Exclusion, Slot, check,
                             coordinate, mhz, tv_channel)
-from . import dialogs
+from . import dialogs, style
 from .site_search import attach_site_search
 from .context import AppContext
 from .fit import compact_combo
@@ -68,13 +68,17 @@ class CoordinationTab(QWidget):
         self.table.itemChanged.connect(self._item_changed)
 
         # two short rows instead of one long one: editing the list / running
+        # The order of this list is the order of the buttons in the row.
         edit_row = QHBoxLayout()
-        for text, fn in [("Add slot", self.add_slot), ("Add from library…", self.add_from_library),
-                         ("Remove", self.remove_slots),
-                         ("Import from devices", self.import_devices),
-                         ("Clear unfixed", self.clear_unfixed)]:
+        for text, fn, look in [("Import from devices", self.import_devices, style.primary),
+                               ("Add slot", self.add_slot, None),
+                               ("Add from library…", self.add_from_library, None),
+                               ("Clear unfixed", self.clear_unfixed, None),
+                               ("Remove", self.remove_slots, style.danger)]:
             b = QPushButton(text)
             b.clicked.connect(fn)
+            if look:
+                look(b)
             edit_row.addWidget(b)
         edit_row.addStretch()
         btns = QHBoxLayout()
@@ -169,7 +173,7 @@ class CoordinationTab(QWidget):
         add_st.setToolTip("Add the site's TV and DAB channels as exclusions")
         add_st.clicked.connect(self.add_station)
         add_st.setEnabled(bool(lib.sites))
-        rem_ex = QPushButton("Remove")
+        rem_ex = style.danger(QPushButton("Remove"))
         rem_ex.clicked.connect(self.remove_exclusions)
         near = QPushButton("Nearby transmitters…")
         near.setToolTip("Find TV / DAB / FM transmitters around the venue (UKE register)")

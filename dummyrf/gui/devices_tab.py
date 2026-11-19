@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
 from ..profiles import (BOOL, FAMILIES, FREQ, INT, STR, ModelProfile, Param,
                         models_for_family)
 from ..show import DeviceSpec
-from . import dialogs
+from . import dialogs, style
 from .context import AppContext
 from .fit import compact_combo
 
@@ -317,7 +317,7 @@ class DevicesTab(QWidget):
         bar = QHBoxLayout()
         add = QPushButton("Add device…")
         scan = QPushButton("Scan network…")
-        rem = QPushButton("Remove")
+        rem = style.danger(QPushButton("Remove"))
         demo = QPushButton("Start demo rack (simulators)")
         add.clicked.connect(self.add_device)
         scan.clicked.connect(self.scan_network)

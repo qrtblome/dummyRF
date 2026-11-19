@@ -6,18 +6,19 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QSettings
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMenu,
                                QPushButton, QVBoxLayout, QWidget)
 
-from ..coordination import imd_products, mhz
+from ..coordination import SPACING_PROFILES, imd_products, mhz
 from ..scan import load_scan, synthetic_scan
 from . import dialogs
 from .context import AppContext
+from .markers import ChannelMarkers
 from .wwb_watch import DEFAULT_FOLDER, WwbScanWatcher
 
 SCAN_COLORS = ["#4aa3df", "#9b59b6", "#16a085", "#d35400", "#7f8c8d"]
-CARRIER_COLORS = {"digital_mic": "#2ecc71", "analog_iem": "#f1c40f", "analog_mic": "#e67e22",
-                  "strict": "#ecf0f1"}
+FILL_FLOOR_DBM = -130   # scan fills reach down to here
 
 
 class SpectrumTab(QWidget):
@@ -69,6 +70,7 @@ class SpectrumTab(QWidget):
                                          label="threshold {value:.0f} dBm",
                                          labelOpts={"position": 0.95, "color": "#e74c3c"})
         self.threshold.sigPositionChangeFinished.connect(self._threshold_moved)
+        self.markers = ChannelMarkers(self.plot.plotItem)
         self.plot.scene().sigMouseMoved.connect(self._mouse)
 
         from .scanner_panel import ScannerPanel
@@ -188,8 +190,12 @@ class SpectrumTab(QWidget):
             pi.addItem(r)
 
         for i, s in enumerate(self.ctx.scans):
-            pi.plot(s.freqs_khz / 1000, s.levels_dbm, name=s.name,
-                    pen=pg.mkPen(SCAN_COLORS[i % len(SCAN_COLORS)], width=1))
+            c = QColor(SCAN_COLORS[i % len(SCAN_COLORS)])
+            fill = QColor(c)
+            fill.setAlpha(55)
+            # filled down to the bottom of the plot so overlapping scans stay readable
+            pi.plot(s.freqs_khz / 1000, s.levels_dbm, name=s.name, pen=pg.mkPen(c, width=1.2),
+                    fillLevel=FILL_FLOOR_DBM, brush=pg.mkBrush(fill))
 
         self.scanner.attach(pi)
 
@@ -209,12 +215,6 @@ class SpectrumTab(QWidget):
                             symbolBrush=color, symbolPen=None,
                             name=f"{ntx}-tx {'3rd' if order == 3 else '5th'}")
 
-        for n, s in enumerate(sorted(slots, key=lambda s: s.freq_khz)):
-            color = CARRIER_COLORS.get(s.profile, "#ffffff")
-            line = pg.InfiniteLine(s.freq_khz / 1000, angle=90, movable=False,
-                                   pen=pg.mkPen(color, width=1.5),
-                                   label=s.label if self.show_labels.isChecked() else None,
-                                   labelOpts={"position": 0.92 - 0.12 * (n % 4), "color": color, "rotateAxis": (1, 0),
-                                              "anchors": [(0, 0.5), (0, 0.5)]})
-            line.setToolTip(f"{s.label}\n{mhz(s.freq_khz)} MHz")
-            pi.addItem(line)
+        self.markers.set([(s.freq_khz / 1000, s.label or "?", s.profile,
+                           f"{s.label}\n{mhz(s.freq_khz)} MHz\n{SPACING_PROFILES.get(s.profile).label if s.profile in SPACING_PROFILES else s.profile}")
+                          for s in slots], labels=self.show_labels.isChecked())

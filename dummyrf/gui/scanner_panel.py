@@ -37,7 +37,8 @@ class ScannerPanel(QGroupBox):
         self._coord_scan: Scan | None = None   # the scan we handed to coordination
 
         self.live_curve = pg.PlotDataItem(pen=LIVE_PEN, name="live")
-        self.peak_curve = pg.PlotDataItem(pen=PEAK_PEN, name="peak hold")
+        self.peak_curve = pg.PlotDataItem(pen=PEAK_PEN, name="peak hold", fillLevel=-130,
+                                          brush=pg.mkBrush(255, 107, 107, 40))
 
         self.backend = compact_combo()
         self.backend.addItem("RTL-SDR (rtl_power)", "rtl")
