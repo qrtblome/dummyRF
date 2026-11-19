@@ -45,11 +45,13 @@ echo "Building dummyRF $VERSION for macOS $ARCH …"
   --add-data "$ROOT/$DATA/channel_plans.json:$DATA" \
   --add-data "$ROOT/$DATA/transmitters_pl.json:$DATA" \
   --add-data "$ROOT/$DATA/postcodes_pl.tsv.gz:$DATA" \
+--icon "$ROOT/packaging/dummyRF.icns" \
   --exclude-module PySide6.QtWebEngineCore \
   --exclude-module PySide6.QtWebEngineWidgets \
   --exclude-module PySide6.Qt3DCore \
   --distpath "$WORK/dist" --workpath "$WORK/build" --specpath "$WORK" \
   "$ROOT/packaging/dummyRF_launcher.py"
+  
 
 APP="$WORK/dist/dummyRF.app"
 # Fail loudly if dummyRF itself didn't make it into the bundle.
