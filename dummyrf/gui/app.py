@@ -5,7 +5,7 @@ import gc
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QTabWidget
 
@@ -15,6 +15,7 @@ from ..scan import load_scan
 from ..show import Show
 from . import dialogs
 from .context import AppContext
+from .settings import app_settings
 from .coordination_tab import CoordinationTab
 from .devices_tab import DevicesTab
 from .fit import fit_to_screen, keep_on_screen, tame_combos
@@ -73,7 +74,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ geometry
     def _restore_geometry(self):
-        geo = QSettings(APP_NAME, APP_NAME).value("window/geometry")
+        geo = app_settings().value("window/geometry")
         if geo is not None and self.restoreGeometry(geo):
             keep_on_screen(self)
         else:
@@ -140,7 +141,7 @@ class MainWindow(QMainWindow):
             self._title()
 
     def closeEvent(self, ev):
-        QSettings(APP_NAME, APP_NAME).setValue("window/geometry", self.saveGeometry())
+        app_settings().setValue("window/geometry", self.saveGeometry())
         self.spectrum.scanner.shutdown()
         self.manager.shutdown()
         super().closeEvent(ev)

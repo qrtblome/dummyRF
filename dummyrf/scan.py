@@ -25,6 +25,9 @@ class Scan:
     freqs_khz: np.ndarray   # sorted, float
     levels_dbm: np.ndarray
     path: str = ""
+    # True when the levels are real dBm (Shure receivers, WWB .sdb3); False for
+    # sources with only roughly known levels (RTL-SDR, generic CSV, demo)
+    calibrated: bool = False
 
     @property
     def span(self) -> tuple[float, float]:
@@ -176,7 +179,7 @@ def parse_sdb3(data: bytes, name: str = "scan") -> Scan:
     freqs = np.concatenate(freqs_all)
     ok = ~np.isnan(best)
     order = np.argsort(freqs[ok], kind="stable")
-    return Scan(label, freqs[ok][order], best[ok][order])
+    return Scan(label, freqs[ok][order], best[ok][order], calibrated=True)   # WWB: receiver dBm
 
 
 def load_scan(path: str | Path) -> Scan:
@@ -292,3 +295,32 @@ def write_csv(scan: Scan, path: str | Path) -> None:
     lines += [f"{f / 1000:.4f},{lv:.1f}" for f, lv in zip(scan.freqs_khz, scan.levels_dbm)
               if not np.isnan(lv)]
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ------------------------------------------------------------------ normalisation
+FLOOR_PERCENTILE = 20     # 80 % of the points lie above the noise-floor estimate
+
+
+def noise_floor(scan: Scan) -> float:
+    """Estimate of the scan's noise floor (dB), robust to strong signals."""
+    v = scan.levels_dbm[np.isfinite(scan.levels_dbm)]
+    return float(np.percentile(v, FLOOR_PERCENTILE)) if len(v) else float("nan")
+
+
+def normalize(scans: list[Scan]) -> list[tuple[Scan, float]]:
+    """Shift every scan so its noise floor matches a reference scan.
+
+    The reference is the first calibrated scan (real dBm from a receiver), or
+    the first scan if none is calibrated.  Returns (shifted copy, shift in dB).
+    """
+    if not scans:
+        return []
+    ref = next((s for s in scans if s.calibrated), scans[0])
+    ref_floor = noise_floor(ref)
+    out = []
+    for s in scans:
+        shift = 0.0 if s is ref or not np.isfinite(ref_floor) else ref_floor - noise_floor(s)
+        if not np.isfinite(shift):
+            shift = 0.0
+        out.append((Scan(s.name, s.freqs_khz, s.levels_dbm + shift, s.path, s.calibrated), shift))
+    return out

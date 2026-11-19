@@ -17,6 +17,7 @@ from ..scan import Scan, write_csv, write_sdb3
 from . import dialogs
 from .fit import compact_combo, elastic
 from .context import AppContext
+from .settings import app_settings
 
 LIVE_PEN = pg.mkPen("#7fb3ff", width=1)
 PEAK_PEN = pg.mkPen("#ff6b6b", width=1.5)
@@ -70,8 +71,11 @@ class ScannerPanel(QGroupBox):
         self.offset.setRange(-100, 100)
         self.offset.setDecimals(1)
         self.offset.setSuffix(" dB")
-        self.offset.setToolTip("Added to every level. rtl_power reports uncalibrated dB — "
-                               "set this once against a known signal to read roughly dBm.")
+        self.offset.setToolTip("Added to every level, remembered per scanner source.\n"
+                               "RTL-SDR reads about 70 dB higher than Shure receivers, so it "
+                               "starts at -70 dB;\nShure receivers report real dBm (0 dB).")
+        self.offset.valueChanged.connect(self._offset_changed)
+        self._loading_offset = False
         self.ppm = QSpinBox()
         self.ppm.setRange(-200, 200)
         self.ppm.setSuffix(" ppm")
@@ -142,10 +146,27 @@ class ScannerPanel(QGroupBox):
             self.step.addItem(f"{k} kHz", k)
         self.step.setCurrentIndex(max(0, self.step.findData(500 if rx else 25 if kind == "acn"
                                                             else keep or 25)))
+        self._load_offset(kind)
         if uses_receiver:
             self._refresh_receivers()
             self._receiver_chosen()
         self._update_buttons()
+
+    # level offset per scanner source, remembered between runs
+    OFFSET_DEFAULTS = {"rtl": -70.0}       # RTL-SDR reads ~70 dB above receiver dBm
+
+    def _load_offset(self, kind: str) -> None:
+        v = app_settings().value(f"scanner/offset/{kind}",
+                                                    self.OFFSET_DEFAULTS.get(kind, 0.0), type=float)
+        self._loading_offset = True
+        try:
+            self.offset.setValue(v)
+        finally:
+            self._loading_offset = False
+
+    def _offset_changed(self, v: float) -> None:
+        if not self._loading_offset:
+            app_settings().setValue(f"scanner/offset/{self.backend.currentData()}", v)
 
     def _receivers(self) -> list[tuple[str, int, str]]:
         m = self.ctx.manager
@@ -412,7 +433,10 @@ class ScannerPanel(QGroupBox):
     def _peak_scan(self) -> Scan:
         src = self._source_name()
         when = (self._started_at or datetime.datetime.now()).strftime("%Y-%m-%d %H:%M")
-        return Scan(f"{src} peak hold {when}", self.peak.freqs.copy(), self.peak.levels.copy())
+        # Shure receivers report real dBm; RTL-SDR / simulated levels are only approximate
+        calibrated = self.backend.currentData() in ("rx", "acn")
+        return Scan(f"{src} peak hold {when}", self.peak.freqs.copy(), self.peak.levels.copy(),
+                    calibrated=calibrated)
 
     def use_for_coordination(self):
         scan = self._peak_scan()

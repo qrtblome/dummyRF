@@ -24,6 +24,7 @@ class DeviceSpec:
 class Settings:
     fifth_order: bool = True
     use_scan: bool = True
+    normalize_scans: bool = False     # align scans' noise floors (display + coordination)
     threshold_dbm: float = -80.0
     time_limit_s: float = 5.0
     poll_interval_s: float = 2.0

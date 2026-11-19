@@ -69,6 +69,11 @@ Three ways to use receiver scans (Spectrum tab):
   before changing anything). The channel's audio is off during the sweep and its frequency is restored
   afterwards. Slow (~0.4 s per step) and coarse (~200 kHz receiver filter) — use a spare channel.
 
+**Levels:** each scanner source has its own level offset, remembered between runs — RTL-SDR starts at
+−70 dB (it reads about 70 dB above Shure receivers), Shure receivers at 0 dB (real dBm). The Spectrum tab's
+**Normalize** option shifts every scan so its noise floor matches a reference scan (the first one from a Shure
+receiver or WWB, else the first); the shift is shown in the legend and coordination uses the same levels.
+
 ## Finding devices on the network
 
 Devices tab → **Scan network…** (or Tools → Scan network, Ctrl+F). Pick the adapter connected to the RF

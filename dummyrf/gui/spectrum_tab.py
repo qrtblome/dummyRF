@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMenu,
                                QPushButton, QVBoxLayout, QWidget)
@@ -14,6 +13,7 @@ from ..coordination import SPACING_PROFILES, imd_products, mhz
 from ..scan import load_scan, synthetic_scan
 from . import dialogs
 from .context import AppContext
+from .settings import app_settings
 from .markers import ChannelMarkers
 from .wwb_watch import DEFAULT_FOLDER, WwbScanWatcher
 
@@ -41,11 +41,18 @@ class SpectrumTab(QWidget):
         self.show_labels.toggled.connect(self.redraw)
         bar.addWidget(self.show_imd)
         bar.addWidget(self.show_labels)
+        self.normalize = QCheckBox("Normalize")
+        self.normalize.setToolTip("Shift each scan so its noise floor matches a reference scan —\n"
+                                  "the first one from a Shure receiver/WWB (real dBm), else the first.\n"
+                                  "Lets RTL-SDR and receiver scans be compared; coordination uses\n"
+                                  "the normalized levels too.")
+        self.normalize.toggled.connect(self._normalize_toggled)
+        bar.addWidget(self.normalize)
         # ---- receiver scans made in Wireless Workbench
         self.wwb = WwbScanWatcher(parent=self)
         self.wwb.new_scan.connect(self._wwb_scan)
         self.wwb.failed.connect(lambda msg: self.info.setText(f"WWB scan not loaded: {msg}"))
-        cfg = QSettings("dummyRF", "dummyRF")
+        cfg = app_settings()
         self.wwb.folder = Path(cfg.value("wwb/folder", str(DEFAULT_FOLDER)))
         self.wwb_auto = QCheckBox("Auto-load WWB scans")
         self.wwb_auto.setToolTip(f"Load every scan Wireless Workbench saves in\n{self.wwb.folder}\n"
@@ -85,7 +92,7 @@ class SpectrumTab(QWidget):
                     ctx.settings_changed):
             sig.connect(self.redraw)
         self.redraw()
-        if QSettings("dummyRF", "dummyRF").value("wwb/auto", False, type=bool):
+        if app_settings().value("wwb/auto", False, type=bool):
             self.wwb_auto.setChecked(True)
 
     # ------------------------------------------------------------ actions
@@ -115,9 +122,13 @@ class SpectrumTab(QWidget):
         self.ctx.show_data.scan_paths.clear()
         self.ctx.scans_changed.emit()
 
+    def _normalize_toggled(self, on: bool):
+        self.ctx.show_data.settings.normalize_scans = on
+        self.ctx.settings_changed.emit()        # redraws, and coordination uses it too
+
     # ------------------------------------------------------------ WWB scans
     def _wwb_toggled(self, on: bool):
-        QSettings("dummyRF", "dummyRF").setValue("wwb/auto", on)
+        app_settings().setValue("wwb/auto", on)
         if on:
             if not self.wwb.folder.is_dir():
                 self.info.setText(f"WWB folder not found: {self.wwb.folder}")
@@ -151,7 +162,7 @@ class SpectrumTab(QWidget):
         d = QFileDialog.getExistingDirectory(self, "WWB scan folder", str(self.wwb.folder))
         if d:
             self.wwb.folder = Path(d)
-            QSettings("dummyRF", "dummyRF").setValue("wwb/folder", d)
+            app_settings().setValue("wwb/folder", d)
             self.wwb_auto.setToolTip(f"Load every scan Wireless Workbench saves in\n{d}")
             if self.wwb.active:
                 self.wwb.start()
@@ -177,6 +188,10 @@ class SpectrumTab(QWidget):
 
     # ------------------------------------------------------------ drawing
     def redraw(self, *_):
+        if self.normalize.isChecked() != self.ctx.show_data.settings.normalize_scans:
+            self.normalize.blockSignals(True)
+            self.normalize.setChecked(self.ctx.show_data.settings.normalize_scans)
+            self.normalize.blockSignals(False)
         pi = self.plot.plotItem
         pi.clear()
         if pi.legend:
@@ -189,12 +204,13 @@ class SpectrumTab(QWidget):
             r.setZValue(-20)
             pi.addItem(r)
 
-        for i, s in enumerate(self.ctx.scans):
+        for i, (s, shift) in enumerate(self.ctx.display_scans()):
             c = QColor(SCAN_COLORS[i % len(SCAN_COLORS)])
             fill = QColor(c)
             fill.setAlpha(55)
             # filled down to the bottom of the plot so overlapping scans stay readable
-            pi.plot(s.freqs_khz / 1000, s.levels_dbm, name=s.name, pen=pg.mkPen(c, width=1.2),
+            name = s.name + (f"  ({shift:+.1f} dB)" if abs(shift) >= 0.05 else "")
+            pi.plot(s.freqs_khz / 1000, s.levels_dbm, name=name, pen=pg.mkPen(c, width=1.2),
                     fillLevel=FILL_FLOOR_DBM, brush=pg.mkBrush(fill))
 
         self.scanner.attach(pi)

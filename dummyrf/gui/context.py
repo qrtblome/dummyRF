@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Signal
 
 from ..manager import DeviceManager
-from ..scan import Scan, combine_max
+from ..scan import Scan, combine_max, normalize
 from ..show import Show
 
 
@@ -20,8 +20,15 @@ class AppContext(QObject):
         self.show_data = Show()
         self.scans: list[Scan] = []
 
+    def display_scans(self) -> list[tuple[Scan, float]]:
+        """Scans as shown and used for coordination: normalised when that's on.
+        Returns (scan, shift dB)."""
+        if self.show_data.settings.normalize_scans and len(self.scans) > 1:
+            return normalize(self.scans)
+        return [(s, 0.0) for s in self.scans]
+
     def combined_scan(self):
-        return combine_max(self.scans)
+        return combine_max([s for s, _ in self.display_scans()])
 
     def notify_all(self):
         self.inventory_changed.emit()
